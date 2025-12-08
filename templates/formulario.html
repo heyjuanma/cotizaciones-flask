@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cotización</title>
+    <style>
+        body { font-family: Arial; margin: 40px; }
+        input, textarea, button { width: 100%; padding: 8px; margin: 6px 0; }
+        button { background: #1f2937; color: white; border: none; padding: 10px; cursor: pointer;}
+        label { font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<h2>Generar Cotización</h2>
+
+<form method="post">
+    <label>Cliente</label>
+    <input name="cliente" required>
+
+    <label>Teléfono</label>
+    <input name="telefono" required>
+
+    <label>Descripción</label>
+    <textarea name="descripcion" rows="5" required></textarea>
+
+    <label>Subtotal ₡</label>
+    <input type="number" step="0.01" name="subtotal" required>
+
+    <button>Generar PDF</button>
+</form>
+
+</body>
+</html>
