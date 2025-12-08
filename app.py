@@ -1,156 +1,77 @@
-import os
-from flask import Flask, render_template, request, send_file
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, render_template, request, redirect, url_for, send_file, flash
 from datetime import datetime
-from io import BytesIO
+import io
 import boto3
-from reportlab.lib.pagesizes import LETTER
+import psycopg2
 from reportlab.pdfgen import canvas
 
-# ------------------------
-# CONFIGURACIÓN FLASK
-# ------------------------
 app = Flask(__name__)
+app.secret_key = "tu_clave_secreta"
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Configuración S3
+S3_BUCKET = "tu-bucket"
+S3_REGION = "tu-region"
+s3_client = boto3.client("s3")
 
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-db = SQLAlchemy(app)
-
-# ------------------------
-# AWS / S3
-# ------------------------
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    region_name=os.environ.get("AWS_REGION"),
+# Configuración PostgreSQL
+conn = psycopg2.connect(
+    host="tu_host",
+    database="tu_db",
+    user="tu_user",
+    password="tu_password"
 )
 
-S3_BUCKET = os.environ.get("S3_BUCKET")
-
-# ------------------------
-# MODELO BD
-# ------------------------
-class Cotizacion(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    contrato = db.Column(db.String(100))
-    cliente = db.Column(db.String(200))
-    telefono = db.Column(db.String(50))
-    descripcion = db.Column(db.Text)
-    subtotal = db.Column(db.Float)
-    iva = db.Column(db.Float)
-    total = db.Column(db.Float)
-    fecha = db.Column(db.String(20))
-    s3_key = db.Column(db.String(300))
-
-# ✅ CREAR TABLAS AUTOMÁTICAMENTE (PRODUCCIÓN)
-with app.app_context():
-    db.create_all()
-
-# ------------------------
-# RUTAS
-# ------------------------
 @app.route("/", methods=["GET", "POST"])
-def index():
+def formulario():
     if request.method == "POST":
-        contrato = request.form["contrato"]
-        cliente = request.form["cliente"]
-        telefono = request.form["telefono"]
-        descripcion = request.form["descripcion"]
-        subtotal = float(request.form["subtotal"])
+        # Campos del formulario con validación segura
+        cliente = request.form.get("cliente", "").strip()
+        telefono = request.form.get("telefono", "").strip()
+        descripcion = request.form.get("descripcion", "").strip()
+        subtotal = float(request.form.get("subtotal", 0))
 
-        iva = subtotal * 0.13
-        total = subtotal + iva
-        fecha = datetime.now().strftime("%d/%m/%Y")
+        # Generar contrato único
+        contrato = f"{datetime.now().year}-{int(datetime.utcnow().timestamp())}"
 
-        # ------------------------
-        # CREAR PDF EN MEMORIA
-        # ------------------------
-        buffer = BytesIO()
-        c = canvas.Canvas(buffer, pagesize=LETTER)
-        c.setFont("Helvetica", 10)
+        # Guardar en PostgreSQL
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO contratos (contrato, cliente, telefono, descripcion, subtotal)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (contrato, cliente, telefono, descripcion, subtotal))
+            conn.commit()
 
-        c.drawString(50, 750, "COTIZACIÓN")
-        c.drawString(50, 730, f"Contrato: {contrato}")
-        c.drawString(50, 715, f"Cliente: {cliente}")
-        c.drawString(50, 700, f"Teléfono: {telefono}")
-        c.drawString(50, 680, f"Fecha: {fecha}")
-
-        c.drawString(50, 640, "Descripción:")
-        c.drawString(50, 620, descripcion)
-
-        c.drawString(50, 560, f"Subtotal: ₡ {subtotal:,.2f}")
-        c.drawString(50, 540, f"IVA (13%): ₡ {iva:,.2f}")
-        c.drawString(50, 520, f"Total: ₡ {total:,.2f}")
-
-        c.showPage()
+        # Generar PDF en memoria
+        pdf_buffer = io.BytesIO()
+        c = canvas.Canvas(pdf_buffer)
+        c.drawString(100, 800, f"Contrato: {contrato}")
+        c.drawString(100, 780, f"Cliente: {cliente}")
+        c.drawString(100, 760, f"Teléfono: {telefono}")
+        c.drawString(100, 740, f"Descripción: {descripcion}")
+        c.drawString(100, 720, f"Subtotal: {subtotal}")
         c.save()
+        pdf_buffer.seek(0)
 
-        buffer.seek(0)
-
-        # ------------------------
-        # SUBIR PDF A S3
-        # ------------------------
-        cliente_folder = cliente.replace(" ", "_").lower()
-        filename = f"cotizacion_{contrato}_{fecha}.pdf"
-        s3_key = f"{cliente_folder}/{filename}"
-
-        s3.upload_fileobj(
-            buffer,
+        # Guardar PDF en S3
+        s3_client.upload_fileobj(
+            pdf_buffer,
             S3_BUCKET,
-            s3_key,
-            ExtraArgs={"ContentType": "application/pdf"},
+            f"contratos/{contrato}.pdf",
+            ExtraArgs={"ContentType": "application/pdf"}
         )
 
-        # ------------------------
-        # GUARDAR BD
-        # ------------------------
-        cot = Cotizacion(
-            contrato=contrato,
-            cliente=cliente,
-            telefono=telefono,
-            descripcion=descripcion,
-            subtotal=subtotal,
-            iva=iva,
-            total=total,
-            fecha=fecha,
-            s3_key=s3_key,
-        )
-        db.session.add(cot)
-        db.session.commit()
+        flash(f"Contrato {contrato} generado correctamente.")
+        return render_template("formulario.html", contrato=contrato)
 
-        return render_template(
-            "exito.html",
-            cliente=cliente,
-            contrato=contrato,
-            s3_key=s3_key
-        )
+    return render_template("formulario.html", contrato=None)
 
-    return render_template("formulario.html")
+@app.route("/descargar/<contrato>")
+def descargar(contrato):
+    pdf_buffer = io.BytesIO()
+    # Descargar desde S3
+    s3_client.download_fileobj(S3_BUCKET, f"contratos/{contrato}.pdf", pdf_buffer)
+    pdf_buffer.seek(0)
+    return send_file(pdf_buffer, as_attachment=True, download_name=f"{contrato}.pdf")
 
-
-@app.route("/descargar")
-def descargar_pdf():
-    s3_key = request.args.get("key")
-
-    buffer = BytesIO()
-    s3.download_fileobj(S3_BUCKET, s3_key, buffer)
-    buffer.seek(0)
-
-    return send_file(
-        buffer,
-        as_attachment=True,
-        download_name=s3_key.split("/")[-1],
-        mimetype="application/pdf",
-    )
-
-# ------------------------
-# ENTRYPOINT
-# ------------------------
 if __name__ == "__main__":
     app.run(debug=True)
