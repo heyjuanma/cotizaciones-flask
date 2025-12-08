@@ -1,161 +1,156 @@
-from flask import Flask, render_template, request
-from flask_sqlalchemy import SQLAlchemy
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-from datetime import datetime, timedelta
-import boto3
 import os
-import io
-import urllib.parse
+from flask import Flask, render_template, request, send_file
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+from io import BytesIO
+import boto3
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
 
+# ------------------------
+# CONFIGURACIÓN FLASK
+# ------------------------
 app = Flask(__name__)
 
-# Configuración desde env
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
-# Modelo
+# ------------------------
+# AWS / S3
+# ------------------------
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.environ.get("AWS_REGION"),
+)
+
+S3_BUCKET = os.environ.get("S3_BUCKET")
+
+# ------------------------
+# MODELO BD
+# ------------------------
 class Cotizacion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    contrato = db.Column(db.String(50))
+    contrato = db.Column(db.String(100))
     cliente = db.Column(db.String(200))
     telefono = db.Column(db.String(50))
     descripcion = db.Column(db.Text)
     subtotal = db.Column(db.Float)
     iva = db.Column(db.Float)
     total = db.Column(db.Float)
-    fecha = db.Column(db.String(50))
-    s3_key = db.Column(db.String(500))  # ruta en S3
+    fecha = db.Column(db.String(20))
+    s3_key = db.Column(db.String(300))
 
-# Cliente S3 (usa variables de entorno)
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    region_name=os.environ.get("AWS_REGION")
-)
+# ✅ CREAR TABLAS AUTOMÁTICAMENTE (PRODUCCIÓN)
+with app.app_context():
+    db.create_all()
 
-S3_BUCKET = os.environ.get("S3_BUCKET")
-
-# función para nombres seguros de carpeta/archivo
-def nombre_seguro(nombre):
-    limpio = ""
-    for c in nombre:
-        if c.isalnum() or c in (" ", "_", "-"):
-            limpio += c
-    return limpio.strip().replace(" ", "_").upper()
-
-# generar PDF en memoria (bytes)
-def generar_pdf_bytes(cot):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=letter)
-    c.setFont("Helvetica", 10)
-
-    c.drawString(50, 740, "ROTULOS FREER S.A.")
-    c.drawString(50, 725, "COTIZACIÓN / CONTRATO")
-    c.drawString(400, 740, f"N° {cot.contrato}")
-    c.drawString(400, 725, f"Fecha: {cot.fecha}")
-
-    c.line(50, 715, 550, 715)
-
-    c.drawString(50, 690, f"Cliente: {cot.cliente}")
-    c.drawString(50, 675, f"Teléfono: {cot.telefono}")
-
-    c.drawString(50, 640, "Descripción:")
-    text = c.beginText(50, 625)
-    for line in cot.descripcion.split("\n"):
-        text.textLine(line)
-    c.drawText(text)
-
-    c.line(50, 300, 550, 300)
-
-    c.drawString(350, 275, f"Subtotal: ₡{cot.subtotal:,.2f}")
-    c.drawString(350, 260, f"IVA 13%: ₡{cot.iva:,.2f}")
-    c.drawString(350, 245, f"TOTAL: ₡{cot.total:,.2f}")
-
-    c.drawString(50, 200, "Forma de pago: 50% prima / saldo contra entrega")
-    c.drawString(50, 180, "Pagadero en colones según tipo de cambio BCCR")
-
-    c.drawString(50, 120, "Firma autorizada __________________________")
-
-    c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer.read()
-
-# generar URL prefirmada para descarga (temporal)
-def generar_presigned_url(s3_key, expires_in=3600):
-    try:
-        url = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": S3_BUCKET, "Key": s3_key},
-            ExpiresIn=expires_in
-        )
-        return url
-    except Exception as e:
-        app.logger.error("Error generando presigned URL: %s", e)
-        return None
-
-# RUTA PRINCIPAL: mostrar formulario y procesar
+# ------------------------
+# RUTAS
+# ------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    mensaje = None
-    download_url = None
-
     if request.method == "POST":
-        cliente = request.form.get("cliente", "").strip()
-        telefono = request.form.get("telefono", "").strip()
-        descripcion = request.form.get("descripcion", "").strip()
-        try:
-            subtotal = float(request.form.get("subtotal", "0") or 0)
-        except:
-            subtotal = 0.0
+        contrato = request.form["contrato"]
+        cliente = request.form["cliente"]
+        telefono = request.form["telefono"]
+        descripcion = request.form["descripcion"]
+        subtotal = float(request.form["subtotal"])
 
-        iva = round(subtotal * 0.13, 2)
-        total = round(subtotal + iva, 2)
+        iva = subtotal * 0.13
+        total = subtotal + iva
         fecha = datetime.now().strftime("%d/%m/%Y")
 
-        # guardar en DB
+        # ------------------------
+        # CREAR PDF EN MEMORIA
+        # ------------------------
+        buffer = BytesIO()
+        c = canvas.Canvas(buffer, pagesize=LETTER)
+        c.setFont("Helvetica", 10)
+
+        c.drawString(50, 750, "COTIZACIÓN")
+        c.drawString(50, 730, f"Contrato: {contrato}")
+        c.drawString(50, 715, f"Cliente: {cliente}")
+        c.drawString(50, 700, f"Teléfono: {telefono}")
+        c.drawString(50, 680, f"Fecha: {fecha}")
+
+        c.drawString(50, 640, "Descripción:")
+        c.drawString(50, 620, descripcion)
+
+        c.drawString(50, 560, f"Subtotal: ₡ {subtotal:,.2f}")
+        c.drawString(50, 540, f"IVA (13%): ₡ {iva:,.2f}")
+        c.drawString(50, 520, f"Total: ₡ {total:,.2f}")
+
+        c.showPage()
+        c.save()
+
+        buffer.seek(0)
+
+        # ------------------------
+        # SUBIR PDF A S3
+        # ------------------------
+        cliente_folder = cliente.replace(" ", "_").lower()
+        filename = f"cotizacion_{contrato}_{fecha}.pdf"
+        s3_key = f"{cliente_folder}/{filename}"
+
+        s3.upload_fileobj(
+            buffer,
+            S3_BUCKET,
+            s3_key,
+            ExtraArgs={"ContentType": "application/pdf"},
+        )
+
+        # ------------------------
+        # GUARDAR BD
+        # ------------------------
         cot = Cotizacion(
+            contrato=contrato,
             cliente=cliente,
             telefono=telefono,
             descripcion=descripcion,
             subtotal=subtotal,
             iva=iva,
             total=total,
-            fecha=fecha
+            fecha=fecha,
+            s3_key=s3_key,
         )
         db.session.add(cot)
         db.session.commit()
 
-        cot.contrato = f"{datetime.now().year}-{cot.id:05d}"
-        # crear nombre seguro y key S3
-        cliente_folder = nombre_seguro(cliente or "CLIENTE_SIN_NOMBRE")
-        s3_key = f"{urllib.parse.quote(cliente_folder)}/{urllib.parse.quote(cot.contrato)}.pdf"
-        cot.s3_key = s3_key
-
-        db.session.commit()
-
-        # generar pdf bytes y subir a s3
-        pdf_bytes = generar_pdf_bytes(cot)
-
-        try:
-            s3.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=pdf_bytes, ContentType="application/pdf")
-        except Exception as e:
-            app.logger.error("Error subiendo a S3: %s", e)
-            mensaje = "Error subiendo el PDF a S3. Revisa credenciales y bucket."
-            return render_template("formulario.html", mensaje=mensaje)
-
-        # generar URL de descarga temporal
-        download_url = generar_presigned_url(s3_key, expires_in=3600)
-        mensaje = "Cotización creada y guardada en la nube ✅"
-
-        return render_template("formulario.html", mensaje=mensaje, download_url=download_url, contrato=cot.contrato, cliente=cliente)
+        return render_template(
+            "exito.html",
+            cliente=cliente,
+            contrato=contrato,
+            s3_key=s3_key
+        )
 
     return render_template("formulario.html")
 
-if __name__ == "__main__":
-    app.run()
 
+@app.route("/descargar")
+def descargar_pdf():
+    s3_key = request.args.get("key")
+
+    buffer = BytesIO()
+    s3.download_fileobj(S3_BUCKET, s3_key, buffer)
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=s3_key.split("/")[-1],
+        mimetype="application/pdf",
+    )
+
+# ------------------------
+# ENTRYPOINT
+# ------------------------
+if __name__ == "__main__":
+    app.run(debug=True)
