@@ -1,33 +1,47 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Cotización</title>
+    <meta charset="utf-8"/>
+    <title>Generar Cotización</title>
     <style>
-        body { font-family: Arial; margin: 40px; }
-        input, textarea, button { width: 100%; padding: 8px; margin: 6px 0; }
-        button { background: #1f2937; color: white; border: none; padding: 10px; cursor: pointer;}
-        label { font-weight: bold; }
+        body { font-family: Arial, margin: 30px; max-width: 800px; }
+        input, textarea, button { width: 100%; padding: 8px; margin: 6px 0; box-sizing: border-box; }
+        button { background: #1f2937; color: white; border: none; padding: 10px; cursor: pointer; }
+        .mensaje { background: #e6ffed; border: 1px solid #2ecc71; padding: 10px; margin: 10px 0; }
+        .error { background: #ffe6e6; border: 1px solid #e74c3c; padding: 10px; margin: 10px 0; }
+        .download { margin-top: 12px; display:inline-block; padding:10px 14px; background:#2563eb; color:#fff; text-decoration:none; border-radius:4px;}
     </style>
 </head>
 <body>
+    <h2>Generar Cotización</h2>
 
-<h2>Generar Cotización</h2>
+    {% if mensaje %}
+        <div class="mensaje">{{ mensaje }}</div>
+    {% endif %}
 
-<form method="post">
-    <label>Cliente</label>
-    <input name="cliente" required>
+    {% if download_url %}
+        <div>
+            <strong>Contrato:</strong> {{ contrato }}<br>
+            <strong>Cliente:</strong> {{ cliente }}<br>
+            <a class="download" href="{{ download_url }}" target="_blank" rel="noopener">Descargar PDF (se abre en nueva pestaña)</a>
+        </div>
+    {% endif %}
 
-    <label>Teléfono</label>
-    <input name="telefono" required>
+    <form method="post">
+        <label>Nombre del cliente</label>
+        <input name="cliente" placeholder="Nombre del cliente" required>
 
-    <label>Descripción</label>
-    <textarea name="descripcion" rows="5" required></textarea>
+        <label>Teléfono</label>
+        <input name="telefono" placeholder="Teléfono" required>
 
-    <label>Subtotal ₡</label>
-    <input type="number" step="0.01" name="subtotal" required>
+        <label>Descripción</label>
+        <textarea name="descripcion" rows="5" placeholder="Descripción del trabajo" required></textarea>
 
-    <button>Generar PDF</button>
-</form>
+        <label>Subtotal ₡</label>
+        <input type="number" step="0.01" name="subtotal" placeholder="Subtotal ₡" required>
 
+        <button>Generar PDF</button>
+    </form>
 </body>
 </html>
+
