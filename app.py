@@ -1,16 +1,16 @@
 import os
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
 
 app = Flask(__name__)
 
-# ==============================
-# CONFIGURACIÓN BASE DE DATOS
-# ==============================
+# =====================================================
+# CONFIGURACIÓN DE BASE DE DATOS (RENDER POSTGRES)
+# =====================================================
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Render usa postgres:// y SQLAlchemy necesita postgresql://
+# Render usa "postgres://", SQLAlchemy requiere "postgresql://"
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -19,9 +19,9 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
-# ==============================
-# MODELOS
-# ==============================
+# =====================================================
+# MODELO
+# =====================================================
 class Cotizacion(db.Model):
     __tablename__ = "cotizaciones"
 
@@ -30,33 +30,39 @@ class Cotizacion(db.Model):
     cliente = db.Column(db.String(120), nullable=False)
     total = db.Column(db.Float, nullable=False)
 
-# ==============================
-# INICIALIZAR DB
-# ==============================
+# =====================================================
+# CREAR TABLAS AUTOMÁTICAMENTE
+# =====================================================
 with app.app_context():
     db.create_all()
 
-# ==============================
+# =====================================================
 # RUTAS
-# ==============================
+# =====================================================
 @app.route("/", methods=["GET"])
-def health():
+def home():
     return jsonify({
-        "status": "ok",
-        "service": "Cotizaciones API"
+        "status": "OK",
+        "message": "API de cotizaciones funcionando"
     })
 
 @app.route("/cotizaciones", methods=["POST"])
 def crear_cotizacion():
-    data = request.json
+    data = request.get_json()
 
-    ultimo = db.session.query(func.max(Cotizacion.numero_registro)).scalar()
-    siguiente_numero = 1 if ultimo is None else ultimo + 1
+    if not data or "cliente" not in data or "total" not in data:
+        return jsonify({"error": "Datos incompletos"}), 400
+
+    ultimo_numero = db.session.query(
+        func.max(Cotizacion.numero_registro)
+    ).scalar()
+
+    nuevo_numero = 1 if ultimo_numero is None else ultimo_numero + 1
 
     nueva = Cotizacion(
-        numero_registro=siguiente_numero,
+        numero_registro=nuevo_numero,
         cliente=data["cliente"],
-        total=data["total"]
+        total=float(data["total"])
     )
 
     db.session.add(nueva)
@@ -71,14 +77,17 @@ def crear_cotizacion():
 
 @app.route("/cotizaciones", methods=["GET"])
 def listar_cotizaciones():
-    cotizaciones = Cotizacion.query.order_by(Cotizacion.numero_registro.desc()).all()
+    cotizaciones = Cotizacion.query.order_by(
+        Cotizacion.numero_registro.desc()
+    ).all()
 
-    return jsonify([
-        {
+    resultado = []
+    for c in cotizaciones:
+        resultado.append({
             "id": c.id,
             "numero_registro": c.numero_registro,
             "cliente": c.cliente,
             "total": c.total
-        }
-        for c in cotizaciones
-    ])
+        })
+
+    return jsonify(resultado)
