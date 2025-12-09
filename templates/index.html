@@ -1,103 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Cotizaciones</title>
+    <title>Cotización</title>
 </head>
 <body>
+
 <h2>Nueva Cotización</h2>
 
-<form method="POST" onsubmit="return prepararItems()">
+<form method="POST">
 
-Nombre cliente: <input name="nombre_cliente"><br>
-Contacto: <input name="contacto"><br>
-Email: <input name="email"><br>
-Teléfono: <input name="telefono"><br><br>
+<h3>Cliente</h3>
+<input name="nombre_cliente" placeholder="Nombre cliente" required><br>
+<input name="contacto" placeholder="Contacto"><br>
+<input name="email" placeholder="Email"><br>
+<input name="telefono" placeholder="Teléfono"><br>
 
-Título proyecto: <input name="titulo_proyecto"><br>
-Descripción: <textarea name="descripcion"></textarea><br>
-Instalado: <input name="instalado"><br>
-Diseño: <input name="diseno"><br><br>
+<h3>Proyecto</h3>
+<input name="titulo_proyecto" placeholder="Título"><br>
+<textarea name="descripcion" placeholder="Descripción"></textarea><br>
+<input name="instalado" placeholder="Instalado"><br>
+<input name="diseno" placeholder="Diseño"><br>
 
-<table border="1" id="tabla">
-<tr>
-<th>Cantidad</th>
-<th>Detalle</th>
-<th>Precio</th>
-<th>Monto</th>
-</tr>
-<tr>
-<td><input></td>
-<td><input></td>
-<td><input></td>
-<td>0</td>
-</tr>
-</table>
+<h3>Items</h3>
 
-<button type="button" onclick="agregarFila()">Agregar fila</button>
-<br><br>
+<div>
+    <input name="cantidad" placeholder="Cantidad" required>
+    <input name="detalle" placeholder="Detalle" required>
+    <input name="precio" placeholder="Precio" required>
+</div>
 
-Subtotal: <span id="subtotal">0</span><br>
-Total (13%): <span id="total">0</span><br>
-
-<input type="hidden" name="items" id="items">
-
-<br>
 <button type="submit">Crear Cotización</button>
+
 </form>
 
-<hr>
-
-<h2>Cotizaciones Guardadas</h2>
-<ul>
-{% for c in cotizaciones %}
-<li>
-{{ c.numero_registro }} - {{ c.nombre_cliente }} -
-<a href="/download/{{ c.id }}">Descargar PDF</a>
-</li>
-{% endfor %}
-</ul>
-
-<script>
-function agregarFila() {
-    let t = document.getElementById("tabla");
-    let r = t.insertRow();
-    for (let i = 0; i < 4; i++) r.insertCell();
-    r.cells[0].innerHTML = "<input>";
-    r.cells[1].innerHTML = "<input>";
-    r.cells[2].innerHTML = "<input>";
-    r.cells[3].innerText = "0";
-}
-
-function prepararItems() {
-    let rows = document.querySelectorAll("#tabla tr");
-    let items = [];
-    let subtotal = 0;
-
-    rows.forEach((r, i) => {
-        if (i === 0) return;
-        let c = r.cells[0].firstChild.value;
-        let d = r.cells[1].firstChild.value;
-        let p = r.cells[2].firstChild.value;
-        if (!c || !p) return;
-
-        let monto = c * p;
-        r.cells[3].innerText = monto;
-        subtotal += monto;
-
-        items.push({
-            cantidad: Number(c),
-            detalle: d,
-            precio: Number(p),
-            monto: monto
-        });
-    });
-
-    document.getElementById("subtotal").innerText = subtotal;
-    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
-    document.getElementById("items").value = JSON.stringify(items);
-
-    return true;
-}
-</script>
 </body>
 </html>
