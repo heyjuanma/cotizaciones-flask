@@ -4,121 +4,142 @@ import io
 import os
 import boto3
 import psycopg2
+import traceback
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
-# -------------------------------------------------
-# APP
-# -------------------------------------------------
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "secret")
 
 # -------------------------------------------------
-# DATABASE (Render PostgreSQL)
+# HELPERS
 # -------------------------------------------------
-DATABASE_URL = os.environ["DATABASE_URL"]
+def get_db_connection():
+    try:
+        return psycopg2.connect(os.environ.get("DATABASE_URL"))
+    except Exception as e:
+        print("DB CONNECTION ERROR:")
+        traceback.print_exc()
+        return None
 
-conn = psycopg2.connect(DATABASE_URL)
-conn.autocommit = True
 
 def init_db():
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS contratos (
-                id SERIAL PRIMARY KEY,
-                contrato TEXT UNIQUE NOT NULL,
-                cliente TEXT NOT NULL,
-                telefono TEXT NOT NULL,
-                descripcion TEXT NOT NULL,
-                subtotal NUMERIC NOT NULL,
-                fecha TIMESTAMP NOT NULL
-            )
-        """)
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS contratos (
+                    id SERIAL PRIMARY KEY,
+                    contrato TEXT UNIQUE NOT NULL,
+                    cliente TEXT NOT NULL,
+                    telefono TEXT NOT NULL,
+                    descripcion TEXT NOT NULL,
+                    subtotal NUMERIC NOT NULL,
+                    fecha TIMESTAMP NOT NULL
+                )
+            """)
+        conn.close()
+    except Exception:
+        print("DB INIT ERROR:")
+        traceback.print_exc()
 
-init_db()
 
-# -------------------------------------------------
-# AWS S3
-# -------------------------------------------------
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
-    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-    region_name=os.environ["AWS_REGION"]
-)
+def get_s3_client():
+    try:
+        return boto3.client(
+            "s3",
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            region_name=os.environ.get("AWS_REGION")
+        )
+    except Exception:
+        print("S3 CLIENT ERROR:")
+        traceback.print_exc()
+        return None
 
-S3_BUCKET = os.environ["S3_BUCKET"]
 
 # -------------------------------------------------
 # ROUTES
 # -------------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
+    init_db()
+
     if request.method == "POST":
-        cliente = request.form.get("cliente", "").strip()
-        telefono = request.form.get("telefono", "").strip()
-        descripcion = request.form.get("descripcion", "").strip()
-        subtotal = float(request.form.get("subtotal", 0))
+        try:
+            cliente = request.form.get("cliente", "").strip()
+            telefono = request.form.get("telefono", "").strip()
+            descripcion = request.form.get("descripcion", "").strip()
+            subtotal = float(request.form.get("subtotal", 0))
 
-        if not cliente or not telefono or not descripcion or subtotal <= 0:
-            flash("Todos los campos son obligatorios")
+            contrato = f"{datetime.now().year}-{int(datetime.utcnow().timestamp())}"
+
+            # DB SAVE
+            conn = get_db_connection()
+            if not conn:
+                flash("Error de base de datos")
+                return redirect(url_for("index"))
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO contratos (contrato, cliente, telefono, descripcion, subtotal, fecha)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (contrato, cliente, telefono, descripcion, subtotal, datetime.now()))
+            conn.commit()
+            conn.close()
+
+            # PDF
+            buffer = io.BytesIO()
+            pdf = canvas.Canvas(buffer, pagesize=A4)
+            pdf.setFont("Helvetica", 12)
+            pdf.drawString(50, 800, f"Contrato: {contrato}")
+            pdf.drawString(50, 770, f"Cliente: {cliente}")
+            pdf.drawString(50, 740, f"Subtotal: ${subtotal:,.2f}")
+            pdf.save()
+            buffer.seek(0)
+
+            # S3
+            s3 = get_s3_client()
+            if not s3:
+                flash("Error conectando a S3")
+                return redirect(url_for("index"))
+
+            bucket = os.environ.get("S3_BUCKET")
+            s3.upload_fileobj(buffer, bucket, f"contratos/{contrato}.pdf")
+
+            flash(f"Contrato {contrato} generado")
+            return render_template("formulario.html", contrato=contrato)
+
+        except Exception:
+            print("POST ERROR:")
+            traceback.print_exc()
+            flash("Error interno")
             return redirect(url_for("index"))
-
-        contrato = f"{datetime.now().year}-{int(datetime.utcnow().timestamp())}"
-
-        # Guardar en DB
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO contratos (contrato, cliente, telefono, descripcion, subtotal, fecha)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (contrato, cliente, telefono, descripcion, subtotal, datetime.now()))
-
-        # Generar PDF
-        buffer = io.BytesIO()
-        pdf = canvas.Canvas(buffer, pagesize=A4)
-
-        pdf.setFont("Helvetica-Bold", 16)
-        pdf.drawString(50, 800, f"Contrato: {contrato}")
-
-        pdf.setFont("Helvetica", 12)
-        pdf.drawString(50, 770, f"Cliente: {cliente}")
-        pdf.drawString(50, 750, f"Teléfono: {telefono}")
-        pdf.drawString(50, 730, f"Descripción: {descripcion}")
-        pdf.drawString(50, 710, f"Subtotal: ${subtotal:,.2f}")
-        pdf.drawString(50, 690, f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
-
-        pdf.showPage()
-        pdf.save()
-        buffer.seek(0)
-
-        # Subir a S3
-        s3.upload_fileobj(
-            buffer,
-            S3_BUCKET,
-            f"contratos/{contrato}.pdf",
-            ExtraArgs={"ContentType": "application/pdf"}
-        )
-
-        flash(f"Contrato {contrato} generado correctamente")
-        return render_template("formulario.html", contrato=contrato)
 
     return render_template("formulario.html", contrato=None)
 
 
 @app.route("/descargar/<contrato>")
 def descargar(contrato):
-    buffer = io.BytesIO()
-    s3.download_fileobj(
-        S3_BUCKET,
-        f"contratos/{contrato}.pdf",
-        buffer
-    )
-    buffer.seek(0)
-    return send_file(buffer, as_attachment=True, download_name=f"{contrato}.pdf")
+    try:
+        s3 = get_s3_client()
+        buffer = io.BytesIO()
+        s3.download_fileobj(
+            os.environ.get("S3_BUCKET"),
+            f"contratos/{contrato}.pdf",
+            buffer
+        )
+        buffer.seek(0)
+        return send_file(buffer, as_attachment=True)
+    except Exception:
+        print("DOWNLOAD ERROR:")
+        traceback.print_exc()
+        flash("No se pudo descargar el PDF")
+        return redirect(url_for("index"))
 
 
-# -------------------------------------------------
-# MAIN (local only)
 # -------------------------------------------------
 if __name__ == "__main__":
     app.run(debug=True)
