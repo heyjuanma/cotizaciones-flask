@@ -1,145 +1,194 @@
 import os
 import io
 import json
-from datetime import datetime
-from flask import Flask, render_template, request, redirect
+from datetime import datetime, timedelta
+
+from flask import Flask, render_template, request, redirect, url_for, send_file
 from flask_sqlalchemy import SQLAlchemy
+
+import boto3
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-import boto3
 
+
+# --------------------
+# CONFIGURACIÓN FLASK
+# --------------------
 app = Flask(__name__)
 
-# ---------------- CONFIG ----------------
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "DATABASE_URL",
+    "sqlite:///local.db"
+).replace("postgres://", "postgresql://")
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "secret")
 
 db = SQLAlchemy(app)
 
-S3_BUCKET = os.environ.get("S3_BUCKET")
-AWS_REGION = os.environ.get("AWS_REGION")
 
-s3 = boto3.client("s3", region_name=AWS_REGION)
+# --------------------
+# CONFIGURACIÓN S3
+# --------------------
+S3_BUCKET = "cotizaciones-pdfs"
 
-# ---------------- MODELO ----------------
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.environ.get("AWS_REGION", "us-east-1")
+)
+
+
+# --------------------
+# MODELOS
+# --------------------
 class Cotizacion(db.Model):
-    __tablename__ = "cotizaciones"
-
     id = db.Column(db.Integer, primary_key=True)
-    numero_registro = db.Column(db.Integer, unique=True)
-    nombre_cliente = db.Column(db.String(120))
-    contacto = db.Column(db.String(120))
-    email = db.Column(db.String(120))
-    telefono = db.Column(db.String(50))
+    numero_registro = db.Column(db.String, unique=True, nullable=False)
+
+    nombre_cliente = db.Column(db.String)
+    contacto = db.Column(db.String)
+    email = db.Column(db.String)
+    telefono = db.Column(db.String)
+
     dias_entrega = db.Column(db.Integer)
     fecha_contrato = db.Column(db.Date)
     vigencia = db.Column(db.Integer)
-    titulo_proyecto = db.Column(db.String(200))
+
+    titulo_proyecto = db.Column(db.String)
     descripcion = db.Column(db.Text)
-    instalado = db.Column(db.String(10))
-    diseno = db.Column(db.String(10))
+    instalado = db.Column(db.String)
+    diseno = db.Column(db.String)
+
     subtotal = db.Column(db.Float)
     total = db.Column(db.Float)
-    s3_key = db.Column(db.String(300))
 
-# ---------------- PDF ----------------
+    s3_key = db.Column(db.String)
+
+
+# --------------------
+# PDF
+# --------------------
 def generar_pdf(cot, items):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
-    y = 820
+    y = 800
 
-    def w(text):
+    def w(texto):
         nonlocal y
-        c.drawString(40, y, str(text))
+        c.drawString(40, y, str(texto))
         y -= 16
 
     w(f"COTIZACIÓN #{cot.numero_registro}")
-    w(f"Fecha: {cot.fecha_contrato}")
+    w(f"Fecha contrato: {cot.fecha_contrato}")
     w("")
     w(f"Cliente: {cot.nombre_cliente}")
     w(f"Contacto: {cot.contacto}")
     w(f"Email: {cot.email}")
     w(f"Teléfono: {cot.telefono}")
     w("")
-    w(f"Días entrega: {cot.dias_entrega}")
+    w(f"Días de entrega: {cot.dias_entrega}")
     w(f"Vigencia: {cot.vigencia} días")
     w("")
     w(f"Proyecto: {cot.titulo_proyecto}")
     w(cot.descripcion)
     w("")
-    w("DETALLE:")
+    w("Detalle:")
 
     for i in items:
-        w(f"{i['cantidad']} x {i['detalle']} @ {i['precio']} = {i['monto']}")
+        w(f"{i['cantidad']} | {i['detalle']} | {i['precio']} | {i['monto']}")
 
     w("")
     w(f"Subtotal: {cot.subtotal}")
-    w(f"Total + 13%: {cot.total}")
+    w(f"Total (IVA 13%): {cot.total}")
 
     c.showPage()
     c.save()
+
     buffer.seek(0)
     return buffer
 
-# ---------------- RUTAS ----------------
+
+# --------------------
+# RUTAS
+# --------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        items = json.loads(request.form["items"])
-        subtotal = sum(float(i["monto"]) for i in items)
-        total = round(subtotal * 1.13, 2)
 
-        ultimo = db.session.query(db.func.max(Cotizacion.numero_registro)).scalar()
-        numero = (ultimo or 0) + 1
+        numero = f"{datetime.now().year}-{int(datetime.utcnow().timestamp())}"
+
+        items = json.loads(request.form["items"])
+
+        subtotal = sum(i["monto"] for i in items)
+        total = round(subtotal * 1.13, 2)
 
         cot = Cotizacion(
             numero_registro=numero,
-            nombre_cliente=request.form["nombre_cliente"],
-            contacto=request.form["contacto"],
-            email=request.form["email"],
-            telefono=request.form["telefono"],
+            nombre_cliente=request.form.get("nombre_cliente"),
+            contacto=request.form.get("contacto"),
+            email=request.form.get("email"),
+            telefono=request.form.get("telefono"),
+
             dias_entrega=15,
-            fecha_contrato=datetime.utcnow().date(),
+            fecha_contrato=datetime.today().date(),
             vigencia=15,
-            titulo_proyecto=request.form["titulo_proyecto"],
-            descripcion=request.form["descripcion"],
-            instalado=request.form["instalado"],
-            diseno=request.form["diseno"],
+
+            titulo_proyecto=request.form.get("titulo_proyecto"),
+            descripcion=request.form.get("descripcion"),
+            instalado=request.form.get("instalado"),
+            diseno=request.form.get("diseno"),
+
             subtotal=subtotal,
-            total=total,
+            total=total
         )
-
-        pdf = generar_pdf(cot, items)
-
-        cliente_folder = cot.nombre_cliente.replace(" ", "_")
-        s3_key = f"{cliente_folder}/Contrato_{numero}/cotizacion_{numero}.pdf"
-
-        s3.upload_fileobj(pdf, S3_BUCKET, s3_key)
-
-        cot.s3_key = s3_key
 
         db.session.add(cot)
         db.session.commit()
 
-        return redirect("/")
+        pdf = generar_pdf(cot, items)
+
+        folder = f"{cot.nombre_cliente}/{cot.numero_registro}/cotizacion.pdf"
+
+        s3.upload_fileobj(
+            pdf,
+            S3_BUCKET,
+            folder,
+            ExtraArgs={"ContentType": "application/pdf"}
+        )
+
+        cot.s3_key = folder
+        db.session.commit()
+
+        return redirect(url_for("index"))
 
     cotizaciones = Cotizacion.query.order_by(Cotizacion.numero_registro.desc()).all()
     return render_template("index.html", cotizaciones=cotizaciones)
 
-@app.route("/descargar/<int:id>")
-def descargar(id):
-    cot = Cotizacion.query.get_or_404(id)
-    url = s3.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": S3_BUCKET, "Key": cot.s3_key},
-        ExpiresIn=60
-    )
-    return redirect(url)
 
-# ---------------- INIT ----------------
+@app.route("/download/<int:id>")
+def download(id):
+    cot = Cotizacion.query.get_or_404(id)
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=cot.s3_key)
+    return send_file(
+        io.BytesIO(obj["Body"].read()),
+        as_attachment=True,
+        download_name="cotizacion.pdf"
+    )
+
+
+# --------------------
+# RESET DB (GRATIS)
+# --------------------
+@app.route("/reset-db")
+def reset_db():
+    db.drop_all()
+    db.create_all()
+    return "Base de datos reiniciada ✅"
+
+
+# --------------------
+# INIT
+# --------------------
 with app.app_context():
     db.create_all()
-
-if __name__ == "__main__":
-    app.run(debug=True)
