@@ -1,8 +1,30 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Cotización</title>
+  <title>Cotización</title>
+  <script>
+    function calcular() {
+      let subtotal = 0;
+      document.querySelectorAll(".fila").forEach(f => {
+        let c = f.querySelector(".cantidad").value || 0;
+        let p = f.querySelector(".precio").value || 0;
+        let m = c * p;
+        f.querySelector(".monto").innerText = m.toFixed(2);
+        subtotal += m;
+      });
+      document.getElementById("subtotal").innerText = subtotal.toFixed(2);
+      document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
+    }
+
+    function agregarFila() {
+      const f = document.querySelector(".fila").cloneNode(true);
+      f.querySelectorAll("input").forEach(i => i.value = "");
+      f.querySelector(".monto").innerText = "0.00";
+      document.getElementById("items").appendChild(f);
+    }
+  </script>
 </head>
+
 <body>
 
 <h2>Nueva Cotización</h2>
@@ -10,26 +32,39 @@
 <form method="POST">
 
 <h3>Cliente</h3>
-<input name="nombre_cliente" placeholder="Nombre cliente" required><br>
-<input name="contacto" placeholder="Contacto"><br>
-<input name="email" placeholder="Email"><br>
-<input name="telefono" placeholder="Teléfono"><br>
+<input name="nombre_cliente" required><br>
+<input name="contacto"><br>
+<input name="email"><br>
+<input name="telefono"><br>
 
 <h3>Proyecto</h3>
-<input name="titulo_proyecto" placeholder="Título"><br>
-<textarea name="descripcion" placeholder="Descripción"></textarea><br>
-<input name="instalado" placeholder="Instalado"><br>
-<input name="diseno" placeholder="Diseño"><br>
+<input name="titulo_proyecto"><br>
+<textarea name="descripcion"></textarea><br>
+<input name="instalado"><br>
+<input name="diseno"><br>
 
 <h3>Items</h3>
 
-<div>
-    <input name="cantidad" placeholder="Cantidad" required>
-    <input name="detalle" placeholder="Detalle" required>
-    <input name="precio" placeholder="Precio" required>
-</div>
+<table border="1">
+<thead>
+<tr><th>Cantidad</th><th>Detalle</th><th>Precio</th><th>Monto</th></tr>
+</thead>
+<tbody id="items">
+<tr class="fila">
+<td><input class="cantidad" name="cantidad[]" oninput="calcular()"></td>
+<td><input name="detalle[]"></td>
+<td><input class="precio" name="precio[]" oninput="calcular()"></td>
+<td class="monto">0.00</td>
+</tr>
+</tbody>
+</table>
 
-<button type="submit">Crear Cotización</button>
+<button type="button" onclick="agregarFila()">Agregar fila</button>
+
+<p>Subtotal: ₡<span id="subtotal">0.00</span></p>
+<p>Total (13%): ₡<span id="total">0.00</span></p>
+
+<button type="submit">Generar Cotización</button>
 
 </form>
 
