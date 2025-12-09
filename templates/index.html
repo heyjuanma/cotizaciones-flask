@@ -1,97 +1,103 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Cotizaciones</title>
-<script>
-let items = [];
-
-function addItem() {
-    let c = cantidad.value;
-    let d = detalle.value;
-    let p = precio.value;
-    let m = c * p;
-
-    items.push({cantidad: c, detalle: d, precio: p, monto: m});
-    render();
-}
-
-function render() {
-    table.innerHTML = "";
-    let subtotal = 0;
-
-    items.forEach(i => {
-        subtotal += i.monto;
-        table.innerHTML += `<tr>
-            <td>${i.cantidad}</td>
-            <td>${i.detalle}</td>
-            <td>${i.precio}</td>
-            <td>${i.monto}</td>
-        </tr>`;
-    });
-
-    document.getElementById("items").value = JSON.stringify(items);
-    document.getElementById("subtotal").innerText = subtotal.toFixed(2);
-    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
-}
-</script>
+    <title>Cotizaciones</title>
 </head>
 <body>
+<h2>Nueva Cotización</h2>
 
-<h1>Nueva Cotización</h1>
+<form method="POST" onsubmit="return prepararItems()">
 
-<form method="POST">
-<input name="nombre_cliente" placeholder="Cliente" required><br>
-<input name="contacto" placeholder="Contacto"><br>
-<input name="email" placeholder="Email"><br>
-<input name="telefono" placeholder="Teléfono"><br>
+Nombre cliente: <input name="nombre_cliente"><br>
+Contacto: <input name="contacto"><br>
+Email: <input name="email"><br>
+Teléfono: <input name="telefono"><br><br>
 
-<input name="titulo_proyecto" placeholder="Título proyecto"><br>
-<textarea name="descripcion" placeholder="Descripción"></textarea><br>
+Título proyecto: <input name="titulo_proyecto"><br>
+Descripción: <textarea name="descripcion"></textarea><br>
+Instalado: <input name="instalado"><br>
+Diseño: <input name="diseno"><br><br>
 
-<select name="instalado">
-<option>SI</option>
-<option>NO</option>
-</select>
-
-<select name="diseno">
-<option>SI</option>
-<option>NO</option>
-</select>
-
-<h3>Detalle</h3>
-<input id="cantidad" type="number" placeholder="Cantidad">
-<input id="detalle" placeholder="Detalle">
-<input id="precio" type="number" placeholder="Precio">
-<button type="button" onclick="addItem()">Agregar</button>
-
-<table border="1">
-<thead>
-<tr><th>Cant</th><th>Detalle</th><th>Precio</th><th>Monto</th></tr>
-</thead>
-<tbody id="table"></tbody>
+<table border="1" id="tabla">
+<tr>
+<th>Cantidad</th>
+<th>Detalle</th>
+<th>Precio</th>
+<th>Monto</th>
+</tr>
+<tr>
+<td><input></td>
+<td><input></td>
+<td><input></td>
+<td>0</td>
+</tr>
 </table>
 
-<input type="hidden" id="items" name="items">
+<button type="button" onclick="agregarFila()">Agregar fila</button>
+<br><br>
 
-<p>Subtotal: ₡<span id="subtotal">0</span></p>
-<p>Total +13%: ₡<span id="total">0</span></p>
+Subtotal: <span id="subtotal">0</span><br>
+Total (13%): <span id="total">0</span><br>
 
-<button>Crear Cotización</button>
+<input type="hidden" name="items" id="items">
+
+<br>
+<button type="submit">Crear Cotización</button>
 </form>
 
 <hr>
 
 <h2>Cotizaciones Guardadas</h2>
-
 <ul>
 {% for c in cotizaciones %}
 <li>
-Contrato #{{c.numero_registro}} - {{c.nombre_cliente}}
-<a href="/descargar/{{c.id}}">Descargar PDF</a>
+{{ c.numero_registro }} - {{ c.nombre_cliente }} -
+<a href="/download/{{ c.id }}">Descargar PDF</a>
 </li>
 {% endfor %}
 </ul>
 
+<script>
+function agregarFila() {
+    let t = document.getElementById("tabla");
+    let r = t.insertRow();
+    for (let i = 0; i < 4; i++) r.insertCell();
+    r.cells[0].innerHTML = "<input>";
+    r.cells[1].innerHTML = "<input>";
+    r.cells[2].innerHTML = "<input>";
+    r.cells[3].innerText = "0";
+}
+
+function prepararItems() {
+    let rows = document.querySelectorAll("#tabla tr");
+    let items = [];
+    let subtotal = 0;
+
+    rows.forEach((r, i) => {
+        if (i === 0) return;
+        let c = r.cells[0].firstChild.value;
+        let d = r.cells[1].firstChild.value;
+        let p = r.cells[2].firstChild.value;
+        if (!c || !p) return;
+
+        let monto = c * p;
+        r.cells[3].innerText = monto;
+        subtotal += monto;
+
+        items.push({
+            cantidad: Number(c),
+            detalle: d,
+            precio: Number(p),
+            monto: monto
+        });
+    });
+
+    document.getElementById("subtotal").innerText = subtotal;
+    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
+    document.getElementById("items").value = JSON.stringify(items);
+
+    return true;
+}
+</script>
 </body>
 </html>
