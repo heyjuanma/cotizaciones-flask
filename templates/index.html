@@ -1,45 +1,122 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Cotizaciones</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        form { margin-bottom: 30px; }
-        input, button { padding: 8px; width: 300px; margin: 5px 0; }
-        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-        th, td { border: 1px solid #ccc; padding: 8px; }
-        th { background-color: #f2f2f2; }
-    </style>
+<meta charset="UTF-8">
+<title>Cotizaciones</title>
+<style>
+body { font-family: Arial; margin: 40px; }
+input, textarea { width: 100%; padding: 6px; margin-bottom: 8px; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
+button { padding: 10px; margin-top: 10px; }
+</style>
 </head>
 <body>
 
 <h2>Nueva Cotización</h2>
 
-<form method="POST">
-    <input type="text" name="cliente" placeholder="Cliente" required>
-    <br>
-    <input type="number" step="0.01" name="total" placeholder="Total" required>
-    <br>
-    <button type="submit">Crear Cotización</button>
+<form method="POST" onsubmit="prepararEnvio()">
+
+<h3>Datos del Cliente</h3>
+<input name="nombre_cliente" placeholder="Nombre del cliente" required>
+<input name="contacto" placeholder="Contacto">
+<input name="email" placeholder="Email">
+<input name="telefono" placeholder="Teléfono">
+
+<p><b>Días de entrega:</b> 15</p>
+<p><b>Vigencia:</b> 15 días</p>
+
+<h3>Proyecto</h3>
+<input name="titulo_proyecto" placeholder="Título del proyecto">
+<textarea name="descripcion" placeholder="Descripción"></textarea>
+<input name="instalado" placeholder="Instalado (Sí / No)">
+<input name="diseno" placeholder="Diseño (Sí / No)">
+
+<h3>Detalle</h3>
+<table id="tabla">
+<tr>
+  <th>Cantidad</th>
+  <th>Detalle</th>
+  <th>Precio unitario</th>
+  <th>Monto</th>
+</tr>
+<tr>
+  <td><input type="number" value="1" onchange="calcular()"></td>
+  <td><input type="text"></td>
+  <td><input type="number" value="0" onchange="calcular()"></td>
+  <td class="monto">0</td>
+</tr>
+</table>
+
+<button type="button" onclick="agregarFila()">Agregar línea</button>
+
+<h3>Resumen</h3>
+<p>Subtotal: ₡ <span id="subtotal">0</span></p>
+<p>Total +13% IVA: ₡ <span id="total">0</span></p>
+
+<input type="hidden" name="items_json" id="items_json">
+<input type="hidden" name="subtotal" id="subtotal_input">
+<input type="hidden" name="total" id="total_input">
+
+<button type="submit">Crear Cotización</button>
+
 </form>
 
-<h2>Cotizaciones Guardadas</h2>
+<hr>
 
-<table>
-    <tr>
-        <th>N°</th>
-        <th>Cliente</th>
-        <th>Total</th>
-    </tr>
-    {% for c in cotizaciones %}
-    <tr>
-        <td>{{ c.numero_registro }}</td>
-        <td>{{ c.cliente }}</td>
-        <td>{{ c.total }}</td>
-    </tr>
-    {% endfor %}
-</table>
+<h2>Cotizaciones guardadas</h2>
+<ul>
+{% for c in cotizaciones %}
+<li>
+Contrato #{{ c.numero_registro }} — {{ c.nombre_cliente }}
+<a href="/download/{{ c.id }}">[Descargar PDF]</a>
+</li>
+{% endfor %}
+</ul>
+
+<script>
+function agregarFila() {
+  const tabla = document.getElementById("tabla");
+  const row = tabla.insertRow();
+  row.innerHTML = `
+    <td><input type="number" value="1" onchange="calcular()"></td>
+    <td><input type="text"></td>
+    <td><input type="number" value="0" onchange="calcular()"></td>
+    <td class="monto">0</td>
+  `;
+}
+
+function calcular() {
+  let subtotal = 0;
+  document.querySelectorAll("#tabla tr").forEach((row, i) => {
+    if (i === 0) return;
+    const qty = row.cells[0].children[0].value || 0;
+    const price = row.cells[2].children[0].value || 0;
+    const monto = qty * price;
+    row.querySelector(".monto").innerText = monto;
+    subtotal += monto;
+  });
+  document.getElementById("subtotal").innerText = subtotal;
+  document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
+}
+
+function prepararEnvio() {
+  const items = [];
+  document.querySelectorAll("#tabla tr").forEach((row, i) => {
+    if (i === 0) return;
+    items.push({
+      cantidad: row.cells[0].children[0].value,
+      detalle: row.cells[1].children[0].value,
+      precio: row.cells[2].children[0].value,
+      monto: row.querySelector(".monto").innerText
+    });
+  });
+  document.getElementById("items_json").value = JSON.stringify(items);
+  document.getElementById("subtotal_input").value = document.getElementById("subtotal").innerText;
+  document.getElementById("total_input").value = document.getElementById("total").innerText;
+}
+</script>
 
 </body>
 </html>
+
