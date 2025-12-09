@@ -2,49 +2,46 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Formulario de Contrato</title>
+    <title>Generar Contrato</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        input, textarea { width: 300px; padding: 5px; }
-        button { padding: 10px 20px; margin-top: 10px; }
-        .flash { color: green; margin-bottom: 20px; }
-        .error { color: red; }
+        body { font-family: Arial; margin: 40px; }
+        input, textarea { width: 300px; padding: 6px; }
+        button { padding: 10px 20px; }
+        .msg { color: green; }
     </style>
 </head>
 <body>
-    <h1>Generar Contrato</h1>
 
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}
-            <ul>
-            {% for msg in messages %}
-                <li class="flash">{{ msg }}</li>
-            {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
+<h1>Generar Contrato</h1>
 
-    <form method="POST">
-        <label>Cliente:</label><br>
-        <input type="text" name="cliente" required><br><br>
+{% with messages = get_flashed_messages() %}
+  {% if messages %}
+    {% for m in messages %}
+      <p class="msg">{{ m }}</p>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
 
-        <label>Teléfono:</label><br>
-        <input type="text" name="telefono" required><br><br>
+<form method="POST">
+    <label>Cliente</label><br>
+    <input name="cliente" required><br><br>
 
-        <label>Descripción:</label><br>
-        <textarea name="descripcion" required></textarea><br><br>
+    <label>Teléfono</label><br>
+    <input name="telefono" required><br><br>
 
-        <label>Subtotal:</label><br>
-        <input type="number" step="0.01" name="subtotal" required><br><br>
+    <label>Descripción</label><br>
+    <textarea name="descripcion" required></textarea><br><br>
 
-        <button type="submit">Generar Contrato</button>
-    </form>
+    <label>Subtotal</label><br>
+    <input type="number" step="0.01" name="subtotal" required><br><br>
 
-    {% if contrato %}
-        <h2>Contrato generado: {{ contrato }}</h2>
-        <a href="{{ url_for('descargar', contrato=contrato) }}">
-            Descargar PDF
-        </a>
-    {% endif %}
+    <button type="submit">Generar</button>
+</form>
+
+{% if contrato %}
+    <h3>Contrato {{ contrato }}</h3>
+    <a href="/descargar/{{ contrato }}">Descargar PDF</a>
+{% endif %}
+
 </body>
 </html>
