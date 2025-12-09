@@ -1,63 +1,83 @@
 import os
+import json
+import io
+from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
+import boto3
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
+# =========================
+# APP
+# =========================
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "secret")
 
-# ===========================
-# DATABASE (Render PostgreSQL)
-# ===========================
+# =========================
+# DATABASE
+# =========================
 DATABASE_URL = os.environ.get("DATABASE_URL")
-
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
 db = SQLAlchemy(app)
 
-# ===========================
-# MODEL (ALINEADO CON LA BD)
-# ===========================
-class Cotizacion(db.Model):
-    __tablename__ = "cotizaciones"
+# =========================
+# S3
+# =========================
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    region_name=os.environ["AWS_REGION"]
+)
+BUCKET = os.environ["S3_BUCKET"]
 
+# =========================
+# MODEL
+# =========================
+class Cotizacion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     numero_registro = db.Column(db.Integer, unique=True, nullable=False)
-    cliente = db.Column(db.String(120), nullable=False)
-    total = db.Column(db.Float, nullable=False)
 
-# ===========================
-# ROUTES
-# ===========================
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        cliente = request.form.get("cliente", "").strip()
-        total = request.form.get("total", 0)
+    nombre_cliente = db.Column(db.String(150))
+    contacto = db.Column(db.String(150))
+    email = db.Column(db.String(120))
+    telefono = db.Column(db.String(40))
 
-        if cliente and total:
-            ultimo = db.session.query(
-                func.max(Cotizacion.numero_registro)
-            ).scalar()
+    fecha_contrato = db.Column(db.Date, default=datetime.utcnow)
+    dias_entrega = db.Column(db.Integer, default=15)
+    vigencia = db.Column(db.Integer, default=15)
 
-            nuevo_numero = 1 if ultimo is None else ultimo + 1
+    titulo_proyecto = db.Column(db.String(200))
+    descripcion = db.Column(db.Text)
+    instalado = db.Column(db.String(50))
+    diseno = db.Column(db.String(50))
 
-            cotizacion = Cotizacion(
-                numero_registro=nuevo_numero,
-                cliente=cliente,
-                total=float(total)
-            )
+    items = db.Column(db.Text)
+    subtotal = db.Column(db.Float)
+    total = db.Column(db.Float)
 
-            db.session.add(cotizacion)
-            db.session.commit()
+    s3_key = db.Column(db.String(400))
 
-            return redirect(url_for("index"))
+with app.app_context():
+    db.create_all()
 
-    cotizaciones = Cotizacion.query.order_by(
-        Cotizacion.numero_registro.desc()
-    ).all()
+# =========================
+# PDF
+# =========================
+def generar_pdf(cot, items):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    y = 820
 
-    return render_template("index.html", cotizaciones=cotizaciones)
+    def w(txt):
+        nonlocal y
+        c.drawString(40, y, str(txt))
+        y -= 16
+
+    w(f"COTIZACIÓN #{cot.numero
