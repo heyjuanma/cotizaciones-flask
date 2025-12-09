@@ -1,145 +1,84 @@
-from flask import Flask, render_template, request, send_file, flash, redirect, url_for
-from datetime import datetime
-import io
 import os
-import boto3
-import psycopg2
-import traceback
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "secret")
 
-# -------------------------------------------------
-# HELPERS
-# -------------------------------------------------
-def get_db_connection():
-    try:
-        return psycopg2.connect(os.environ.get("DATABASE_URL"))
-    except Exception as e:
-        print("DB CONNECTION ERROR:")
-        traceback.print_exc()
-        return None
+# ==============================
+# CONFIGURACIÓN BASE DE DATOS
+# ==============================
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# Render usa postgres:// y SQLAlchemy necesita postgresql://
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-def init_db():
-    conn = get_db_connection()
-    if not conn:
-        return
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS contratos (
-                    id SERIAL PRIMARY KEY,
-                    contrato TEXT UNIQUE NOT NULL,
-                    cliente TEXT NOT NULL,
-                    telefono TEXT NOT NULL,
-                    descripcion TEXT NOT NULL,
-                    subtotal NUMERIC NOT NULL,
-                    fecha TIMESTAMP NOT NULL
-                )
-            """)
-        conn.close()
-    except Exception:
-        print("DB INIT ERROR:")
-        traceback.print_exc()
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+db = SQLAlchemy(app)
 
-def get_s3_client():
-    try:
-        return boto3.client(
-            "s3",
-            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-            region_name=os.environ.get("AWS_REGION")
-        )
-    except Exception:
-        print("S3 CLIENT ERROR:")
-        traceback.print_exc()
-        return None
+# ==============================
+# MODELOS
+# ==============================
+class Cotizacion(db.Model):
+    __tablename__ = "cotizaciones"
 
+    id = db.Column(db.Integer, primary_key=True)
+    numero_registro = db.Column(db.Integer, unique=True, nullable=False)
+    cliente = db.Column(db.String(120), nullable=False)
+    total = db.Column(db.Float, nullable=False)
 
-# -------------------------------------------------
-# ROUTES
-# -------------------------------------------------
-@app.route("/", methods=["GET", "POST"])
-def index():
-    init_db()
+# ==============================
+# INICIALIZAR DB
+# ==============================
+with app.app_context():
+    db.create_all()
 
-    if request.method == "POST":
-        try:
-            cliente = request.form.get("cliente", "").strip()
-            telefono = request.form.get("telefono", "").strip()
-            descripcion = request.form.get("descripcion", "").strip()
-            subtotal = float(request.form.get("subtotal", 0))
+# ==============================
+# RUTAS
+# ==============================
+@app.route("/", methods=["GET"])
+def health():
+    return jsonify({
+        "status": "ok",
+        "service": "Cotizaciones API"
+    })
 
-            contrato = f"{datetime.now().year}-{int(datetime.utcnow().timestamp())}"
+@app.route("/cotizaciones", methods=["POST"])
+def crear_cotizacion():
+    data = request.json
 
-            # DB SAVE
-            conn = get_db_connection()
-            if not conn:
-                flash("Error de base de datos")
-                return redirect(url_for("index"))
+    ultimo = db.session.query(func.max(Cotizacion.numero_registro)).scalar()
+    siguiente_numero = 1 if ultimo is None else ultimo + 1
 
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO contratos (contrato, cliente, telefono, descripcion, subtotal, fecha)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (contrato, cliente, telefono, descripcion, subtotal, datetime.now()))
-            conn.commit()
-            conn.close()
+    nueva = Cotizacion(
+        numero_registro=siguiente_numero,
+        cliente=data["cliente"],
+        total=data["total"]
+    )
 
-            # PDF
-            buffer = io.BytesIO()
-            pdf = canvas.Canvas(buffer, pagesize=A4)
-            pdf.setFont("Helvetica", 12)
-            pdf.drawString(50, 800, f"Contrato: {contrato}")
-            pdf.drawString(50, 770, f"Cliente: {cliente}")
-            pdf.drawString(50, 740, f"Subtotal: ${subtotal:,.2f}")
-            pdf.save()
-            buffer.seek(0)
+    db.session.add(nueva)
+    db.session.commit()
 
-            # S3
-            s3 = get_s3_client()
-            if not s3:
-                flash("Error conectando a S3")
-                return redirect(url_for("index"))
+    return jsonify({
+        "id": nueva.id,
+        "numero_registro": nueva.numero_registro,
+        "cliente": nueva.cliente,
+        "total": nueva.total
+    }), 201
 
-            bucket = os.environ.get("S3_BUCKET")
-            s3.upload_fileobj(buffer, bucket, f"contratos/{contrato}.pdf")
+@app.route("/cotizaciones", methods=["GET"])
+def listar_cotizaciones():
+    cotizaciones = Cotizacion.query.order_by(Cotizacion.numero_registro.desc()).all()
 
-            flash(f"Contrato {contrato} generado")
-            return render_template("formulario.html", contrato=contrato)
-
-        except Exception:
-            print("POST ERROR:")
-            traceback.print_exc()
-            flash("Error interno")
-            return redirect(url_for("index"))
-
-    return render_template("formulario.html", contrato=None)
-
-
-@app.route("/descargar/<contrato>")
-def descargar(contrato):
-    try:
-        s3 = get_s3_client()
-        buffer = io.BytesIO()
-        s3.download_fileobj(
-            os.environ.get("S3_BUCKET"),
-            f"contratos/{contrato}.pdf",
-            buffer
-        )
-        buffer.seek(0)
-        return send_file(buffer, as_attachment=True)
-    except Exception:
-        print("DOWNLOAD ERROR:")
-        traceback.print_exc()
-        flash("No se pudo descargar el PDF")
-        return redirect(url_for("index"))
-
-
-# -------------------------------------------------
-if __name__ == "__main__":
-    app.run(debug=True)
+    return jsonify([
+        {
+            "id": c.id,
+            "numero_registro": c.numero_registro,
+            "cliente": c.cliente,
+            "total": c.total
+        }
+        for c in cotizaciones
+    ])
