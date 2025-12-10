@@ -4,11 +4,13 @@
     <title>Cotizaciones</title>
 </head>
 <body>
+
 <h2>Nueva Cotización</h2>
 
-<form method="POST" onsubmit="return prepararItems()">
+<form method="POST" oninput="calcular()">
 
 Nombre cliente: <input name="nombre_cliente"><br>
+Contacto: <input name="contacto"><br>
 Email: <input name="email"><br>
 Teléfono: <input name="telefono"><br><br>
 
@@ -25,16 +27,16 @@ Diseño: <input name="diseno"><br><br>
 <th>Monto</th>
 </tr>
 <tr>
-<td><input oninput="recalcular()"></td>
 <td><input></td>
-<td><input oninput="recalcular()"></td>
+<td><input></td>
+<td><input></td>
 <td>0</td>
 </tr>
 </table>
 
 <button type="button" onclick="agregarFila()">Agregar fila</button>
-<br><br>
 
+<br><br>
 Subtotal: <span id="subtotal">0</span><br>
 Total (13%): <span id="total">0</span><br>
 
@@ -50,7 +52,7 @@ Total (13%): <span id="total">0</span><br>
 <ul>
 {% for c in cotizaciones %}
 <li>
-{{ c.numero_registro }} - {{ c.nombre_cliente }} -
+{{ c.numero_registro }} - {{ c.nombre_cliente }}
 <a href="/download/{{ c.id }}">Descargar PDF</a>
 </li>
 {% endfor %}
@@ -61,60 +63,37 @@ function agregarFila() {
     let t = document.getElementById("tabla");
     let r = t.insertRow();
     for (let i = 0; i < 4; i++) r.insertCell();
-    r.cells[0].innerHTML = "<input oninput='recalcular()'>";
+    r.cells[0].innerHTML = "<input>";
     r.cells[1].innerHTML = "<input>";
-    r.cells[2].innerHTML = "<input oninput='recalcular()'>";
+    r.cells[2].innerHTML = "<input>";
     r.cells[3].innerText = "0";
 }
 
-function recalcular() {
-    let rows = document.querySelectorAll("#tabla tr");
-    let subtotal = 0;
-
-    rows.forEach((r, i) => {
-        if (i === 0) return;
-
-        let c = Number(r.cells[0].querySelector("input")?.value || 0);
-        let p = Number(r.cells[2].querySelector("input")?.value || 0);
-
-        let monto = c * p;
-        r.cells[3].innerText = monto;
-
-        subtotal += monto;
-    });
-
-    document.getElementById("subtotal").innerText = subtotal;
-    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
-}
-
-function prepararItems() {
+function calcular() {
     let rows = document.querySelectorAll("#tabla tr");
     let items = [];
     let subtotal = 0;
 
     rows.forEach((r, i) => {
         if (i === 0) return;
-
-        let c = Number(r.cells[0].querySelector("input")?.value || 0);
-        let d = r.cells[1].querySelector("input")?.value || "";
-        let p = Number(r.cells[2].querySelector("input")?.value || 0);
-        if (!c || !p) return;
+        let c = Number(r.cells[0].firstChild.value || 0);
+        let p = Number(r.cells[2].firstChild.value || 0);
+        let d = r.cells[1].firstChild.value;
 
         let monto = c * p;
+        r.cells[3].innerText = monto.toFixed(2);
         subtotal += monto;
 
-        items.push({
-            cantidad: c,
-            detalle: d,
-            precio: p,
-            monto: monto
-        });
+        if (c && p) {
+            items.push({ cantidad: c, detalle: d, precio: p, monto: monto });
+        }
     });
 
+    document.getElementById("subtotal").innerText = subtotal.toFixed(2);
+    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
     document.getElementById("items").value = JSON.stringify(items);
-    return true;
 }
 </script>
+
 </body>
 </html>
-
