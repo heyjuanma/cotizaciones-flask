@@ -1,144 +1,229 @@
-from flask import Flask, render_template, request, send_file
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib import colors
-from datetime import datetime
 import os
+import io
+import json
+from datetime import datetime
 
+from flask import Flask, render_template, request, redirect, url_for, send_file
+from flask_sqlalchemy import SQLAlchemy
+
+import boto3
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.colors import red, black
+from reportlab.lib.units import cm
+
+
+# --------------------
+# CONFIGURACIÓN FLASK
+# --------------------
 app = Flask(__name__)
 
-def generar_numero_contrato():
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    contador_path = "contador.txt"
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "DATABASE_URL",
+    "sqlite:///local.db"
+).replace("postgres://", "postgresql://")
 
-    if not os.path.exists(contador_path):
-        with open(contador_path, "w") as f:
-            f.write("0")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-    with open(contador_path, "r+") as f:
-        contador = int(f.read()) + 1
-        f.seek(0)
-        f.write(str(contador))
-        f.truncate()
+db = SQLAlchemy(app)
 
-    return f"{hoy}-{contador:04d}"
 
+# --------------------
+# CONFIGURACIÓN S3
+# --------------------
+S3_BUCKET = "cotizaciones-pdfs"
+
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.environ.get("AWS_REGION", "us-east-1")
+)
+
+
+# --------------------
+# MODELOS
+# --------------------
+class Cotizacion(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    numero_registro = db.Column(db.String, unique=True, nullable=False)
+
+    nombre_cliente = db.Column(db.String)
+    contacto = db.Column(db.String)
+    email = db.Column(db.String)
+    telefono = db.Column(db.String)
+
+    dias_entrega = db.Column(db.Integer)
+    fecha_contrato = db.Column(db.Date)
+    vigencia = db.Column(db.Integer)
+
+    titulo_proyecto = db.Column(db.String)
+    descripcion = db.Column(db.Text)
+
+    subtotal = db.Column(db.Float)
+    total = db.Column(db.Float)
+
+    s3_key = db.Column(db.String)
+
+
+# --------------------
+# PDF
+# --------------------
+def generar_pdf(cot, items):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    # LOGO
+    logo_path = os.path.join("static", "logo.png")
+    if os.path.exists(logo_path):
+        c.drawImage(logo_path, 40, height - 100, width=120, preserveAspectRatio=True)
+
+    # NUMERO CONTRATO
+    c.setFont("Helvetica-Bold", 18)
+    c.setFillColor(red)
+    c.drawRightString(width - 40, height - 60, f"Contrato Nº {cot.numero_registro}")
+    c.setFillColor(black)
+
+    y = height - 130
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, f"Nombre del Cliente: {cot.nombre_cliente}")
+    y -= 18
+    c.drawString(40, y, f"Contacto: {cot.contacto}")
+    y -= 18
+    c.setFont("Helvetica", 10)
+    c.drawString(40, y, f"Email: {cot.email}")
+    c.drawString(300, y, f"Fecha de contrato: {cot.fecha_contrato}")
+    y -= 18
+    c.drawString(40, y, f"Teléfono: {cot.telefono}")
+    c.drawString(300, y, "Días de entrega: 15 días")
+    y -= 18
+    c.drawString(300, y, "Vigencia del contrato: 15 días")
+
+    # TITULO
+    y -= 40
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(width / 2, y, cot.titulo_proyecto.upper())
+
+    # CUADRO DESCRIPCIÓN
+    y -= 30
+    c.rect(40, y - 60, width - 80, 60)
+    text = c.beginText(50, y - 20)
+    text.setFont("Helvetica", 10)
+    text.textLine(cot.descripcion)
+    c.drawText(text)
+
+    # TABLA
+    y -= 100
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(40, y, "Cant.")
+    c.drawString(90, y, "Detalle")
+    c.drawString(320, y, "Precio")
+    c.drawString(400, y, "Monto")
+
+    c.line(40, y - 2, width - 40, y - 2)
+
+    y -= 20
+    c.setFont("Helvetica", 10)
+
+    for i in items:
+        c.drawString(40, y, str(i["cantidad"]))
+        c.drawString(90, y, i["detalle"])
+        c.drawRightString(370, y, f"{i['precio']:.2f}")
+        c.drawRightString(460, y, f"{i['monto']:.2f}")
+        c.line(40, y - 5, width - 40, y - 5)
+        y -= 18
+
+    # NOTAS
+    y -= 20
+    c.setFont("Helvetica", 8)
+    c.drawString(40, y, "Pagadera en colones al tipo de cambio de la fecha de cancelación de la factura")
+    y -= 12
+    c.drawString(40, y, "según el tipo de cambio para la venta del Banco Central de Costa Rica.")
+    y -= 14
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(40, y, "Forma de Pago: 50% de prima, cancelación contra entrega.")
+
+    # TOTALES
+    c.setFont("Helvetica-Bold", 10)
+    c.drawRightString(width - 40, y + 20, f"Subtotal: {cot.subtotal:.2f}")
+    c.drawRightString(width - 40, y, f"Total (IVA 13%): {cot.total:.2f}")
+
+    # FIRMA
+    y -= 60
+    c.setFont("Helvetica", 10)
+    c.drawString(40, y, "Firma autorizada")
+    y -= 30
+    c.drawString(40, y, "Juan Freer Bustamante")
+    y -= 14
+    c.drawString(40, y, "Gerente General")
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+# --------------------
+# RUTAS
+# --------------------
 @app.route("/", methods=["GET", "POST"])
-def formulario():
+def index():
     if request.method == "POST":
-        data = request.form
-        contrato = generar_numero_contrato()
-        fecha = datetime.now().strftime("%d/%m/%Y")
 
-        file_path = f"contrato_{contrato}.pdf"
-        doc = SimpleDocTemplate(file_path, pagesize=A4)
-        styles = getSampleStyleSheet()
-        elements = []
+        today = datetime.now().strftime("%Y-%m-%d")
 
-        # LOGO
-        logo_path = os.path.join(app.root_path, "static", "logo.png")
-        elements.append(Image(logo_path, width=150, height=70))
-        elements.append(Spacer(1, 10))
+        last = Cotizacion.query.filter(
+            Cotizacion.numero_registro.like(f"{today}%")
+        ).order_by(Cotizacion.numero_registro.desc()).first()
 
-        # CONTRATO
-        elements.append(Paragraph(
-            f"<font color='red' size='16'><b>Contrato número: {contrato}</b></font>",
-            styles["Normal"]
-        ))
-        elements.append(Spacer(1, 10))
+        seq = int(last.numero_registro[-4:]) + 1 if last else 1
+        numero = f"{today}-{seq:04d}"
 
-        elements.append(Paragraph(f"<b>Nombre del Cliente:</b> {data['cliente']}", styles["Normal"]))
-        elements.append(Paragraph(f"<b>Contacto:</b> {data['contacto']}", styles["Normal"]))
-        elements.append(Paragraph(f"<b>Email:</b> {data['email']}", styles["Normal"]))
-        elements.append(Paragraph(
-            f"<b>Teléfono:</b> {data['telefono']} &nbsp;&nbsp;&nbsp; "
-            f"<b>Fecha de contrato:</b> {fecha}",
-            styles["Normal"]
-        ))
-        elements.append(Paragraph(
-            "<b>Días de entrega:</b> 15 Días &nbsp;&nbsp;&nbsp; "
-            "<b>Vigencia del contrato:</b> 15 Días",
-            styles["Normal"]
-        ))
+        items = json.loads(request.form["items"])
+        subtotal = sum(i["monto"] for i in items)
+        total = round(subtotal * 1.13, 2)
 
-        elements.append(Spacer(1, 15))
-
-        # TITULO
-        elements.append(Paragraph(
-            "<b><u>TÍTULO</u></b>",
-            ParagraphStyle(name="titulo", alignment=TA_CENTER, fontSize=14)
-        ))
-
-        elements.append(Spacer(1, 10))
-
-        # CUADRO DESCRIPCIÓN
-        elements.append(Table(
-            [[Paragraph(data["descripcion"], styles["Normal"])]],
-            colWidths=[500],
-            style=[('BOX', (0,0), (-1,-1), 1, colors.black)]
-        ))
-
-        elements.append(Spacer(1, 15))
-
-        # TABLA ITEMS (SIN IMPUESTO)
-        tabla_data = [["Cantidad", "Detalle", "Precio Unit.", "Monto"]]
-
-        subtotal = 0
-        for i in range(len(data.getlist("cantidad[]"))):
-            cant = float(data.getlist("cantidad[]")[i])
-            precio = float(data.getlist("precio[]")[i])
-            monto = cant * precio
-            subtotal += monto
-
-            tabla_data.append([
-                f"{cant:.2f}",
-                data.getlist("detalle[]")[i],
-                f"{precio:.2f}",
-                f"{monto:.2f}"
-            ])
-
-        tabla = Table(tabla_data, colWidths=[60, 240, 80, 80])
-        tabla.setStyle(TableStyle([
-            ('GRID', (0,0), (-1,-1), 1, colors.black),
-            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey)
-        ]))
-
-        elements.append(tabla)
-        elements.append(Spacer(1, 15))
-
-        # NOTAS + TOTALES
-        notas = Paragraph(
-            "Pagadera en colones al tipo de cambio de la fecha de cancelación de la factura "
-            "según el tipo de cambio para la venta del Banco Central de Costa Rica.<br/><br/>"
-            "<b>Forma de Pago: 50% de prima, cancelación contra entrega.</b>",
-            styles["Normal"]
+        cot = Cotizacion(
+            numero_registro=numero,
+            nombre_cliente=request.form.get("nombre_cliente"),
+            contacto=request.form.get("contacto"),
+            email=request.form.get("email"),
+            telefono=request.form.get("telefono"),
+            dias_entrega=15,
+            fecha_contrato=datetime.today().date(),
+            vigencia=15,
+            titulo_proyecto=request.form.get("titulo_proyecto"),
+            descripcion=request.form.get("descripcion"),
+            subtotal=subtotal,
+            total=total
         )
 
-        totales = Table([
-            ["Subtotal", f"{subtotal:.2f}"],
-            ["Impuesto", "0.00"],
-            ["Total", f"{subtotal:.2f}"]
-        ], colWidths=[80,80])
+        db.session.add(cot)
+        db.session.commit()
 
-        totales.setStyle(TableStyle([
-            ('GRID', (0,0), (-1,-1), 1, colors.black)
-        ]))
+        pdf = generar_pdf(cot, items)
 
-        elements.append(Table([[notas, totales]], colWidths=[320,160]))
-        elements.append(Spacer(1, 40))
+        key = f"{cot.nombre_cliente}/{cot.numero_registro}/cotizacion.pdf"
+        s3.upload_fileobj(pdf, S3_BUCKET, key, ExtraArgs={"ContentType": "application/pdf"})
+        cot.s3_key = key
+        db.session.commit()
 
-        # FIRMA
-        elements.append(Paragraph(
-            "<b>Firma autorizada</b><br/>Juan Freer Bustamante<br/>Gerente General",
-            styles["Normal"]
-        ))
+        return redirect(url_for("index"))
 
-        doc.build(elements)
-        return send_file(file_path, as_attachment=True)
+    cotizaciones = Cotizacion.query.order_by(Cotizacion.numero_registro.desc()).all()
+    return render_template("index.html", cotizaciones=cotizaciones)
 
-    return render_template("formulario.html")
 
-if __name__ == "__main__":
-    app.run(debug=True)
+@app.route("/download/<int:id>")
+def download(id):
+    cot = Cotizacion.query.get_or_404(id)
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=cot.s3_key)
+    return send_file(io.BytesIO(obj["Body"].read()),
+                     as_attachment=True,
+                     download_name="cotizacion.pdf")
+
+
+with app.app_context():
+    db.create_all()
