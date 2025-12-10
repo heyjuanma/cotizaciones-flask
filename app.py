@@ -9,13 +9,9 @@ from flask_sqlalchemy import SQLAlchemy
 import boto3
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from reportlab.lib.colors import red, black
-from reportlab.lib.units import cm
+from reportlab.lib.utils import ImageReader
 
 
-# --------------------
-# CONFIGURACIÓN FLASK
-# --------------------
 app = Flask(__name__)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
@@ -24,13 +20,9 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
 ).replace("postgres://", "postgresql://")
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
 db = SQLAlchemy(app)
 
 
-# --------------------
-# CONFIGURACIÓN S3
-# --------------------
 S3_BUCKET = "cotizaciones-pdfs"
 
 s3 = boto3.client(
@@ -41,9 +33,6 @@ s3 = boto3.client(
 )
 
 
-# --------------------
-# MODELOS
-# --------------------
 class Cotizacion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     numero_registro = db.Column(db.String, unique=True, nullable=False)
@@ -66,97 +55,111 @@ class Cotizacion(db.Model):
     s3_key = db.Column(db.String)
 
 
-# --------------------
-# PDF
-# --------------------
+def draw_multiline(c, text, x, y, max_width):
+    textobject = c.beginText(x, y)
+    textobject.setFont("Helvetica", 10)
+
+    for line in text.split("\n"):
+        words = line.split(" ")
+        current = ""
+        for w in words:
+            if c.stringWidth(current + w, "Helvetica", 10) < max_width:
+                current += w + " "
+            else:
+                textobject.textLine(current)
+                current = w + " "
+        textobject.textLine(current)
+
+    c.drawText(textobject)
+    return textobject.getY()
+
+
 def generar_pdf(cot, items):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
+    y = height - 50
 
     # LOGO
-    logo_path = os.path.join("static", "logo.png")
+    logo_path = os.path.join(app.root_path, "static", "logo.png")
     if os.path.exists(logo_path):
-        c.drawImage(logo_path, 40, height - 100, width=120, preserveAspectRatio=True)
+        c.drawImage(ImageReader(logo_path), 40, y - 40, width=120, preserveAspectRatio=True)
 
-    # NUMERO CONTRATO
-    c.setFont("Helvetica-Bold", 18)
-    c.setFillColor(red)
-    c.drawRightString(width - 40, height - 60, f"Contrato Nº {cot.numero_registro}")
-    c.setFillColor(black)
+    c.setFont("Helvetica-Bold", 14)
+    c.setFillColorRGB(1, 0, 0)
+    c.drawRightString(width - 40, y, f"Contrato #{cot.numero_registro}")
 
-    y = height - 130
-
+    y -= 60
+    c.setFillColorRGB(0, 0, 0)
     c.setFont("Helvetica-Bold", 11)
     c.drawString(40, y, f"Nombre del Cliente: {cot.nombre_cliente}")
-    y -= 18
-    c.drawString(40, y, f"Contacto: {cot.contacto}")
-    y -= 18
+
+    y -= 20
     c.setFont("Helvetica", 10)
+    c.drawString(40, y, f"Contacto: {cot.contacto}")
+    y -= 15
     c.drawString(40, y, f"Email: {cot.email}")
-    c.drawString(300, y, f"Fecha de contrato: {cot.fecha_contrato}")
-    y -= 18
+    y -= 15
     c.drawString(40, y, f"Teléfono: {cot.telefono}")
-    c.drawString(300, y, "Días de entrega: 15 días")
-    y -= 18
-    c.drawString(300, y, "Vigencia del contrato: 15 días")
 
-    # TITULO
-    y -= 40
-    c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(width / 2, y, cot.titulo_proyecto.upper())
-
-    # CUADRO DESCRIPCIÓN
     y -= 30
-    c.rect(40, y - 60, width - 80, 60)
-    text = c.beginText(50, y - 20)
-    text.setFont("Helvetica", 10)
-    text.textLine(cot.descripcion)
-    c.drawText(text)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawCentredString(width / 2, y, cot.titulo_proyecto)
+
+    y -= 20
+    c.rect(40, y - 80, width - 80, 80)
+    y = draw_multiline(c, cot.descripcion, 45, y - 15, width - 100)
+    y -= 20
 
     # TABLA
-    y -= 100
+    col_x = [40, 100, 350, 450, 540]
+    row_h = 20
+
+    headers = ["Cant", "Detalle", "Precio", "Monto"]
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(40, y, "Cant.")
-    c.drawString(90, y, "Detalle")
-    c.drawString(320, y, "Precio")
-    c.drawString(400, y, "Monto")
+    for i, h in enumerate(headers):
+        c.drawString(col_x[i] + 5, y, h)
 
-    c.line(40, y - 2, width - 40, y - 2)
+    y -= row_h
+    c.setFont("Helvetica", 9)
 
-    y -= 20
-    c.setFont("Helvetica", 10)
+    for item in items:
+        y_start = y
+        y = draw_multiline(c, str(item["detalle"]), col_x[1] + 5, y, col_x[2] - col_x[1] - 10)
+        max_y = min(y, y_start - row_h)
 
-    for i in items:
-        c.drawString(40, y, str(i["cantidad"]))
-        c.drawString(90, y, i["detalle"])
-        c.drawRightString(370, y, f"{i['precio']:.2f}")
-        c.drawRightString(460, y, f"{i['monto']:.2f}")
-        c.line(40, y - 5, width - 40, y - 5)
-        y -= 18
+        c.drawString(col_x[0] + 5, y_start, str(item["cantidad"]))
+        c.drawString(col_x[2] + 5, y_start, f"{item['precio']}")
+        c.drawString(col_x[3] + 5, y_start, f"{item['monto']}")
 
-    # NOTAS
-    y -= 20
-    c.setFont("Helvetica", 8)
+        y = max_y - 10
+
+    # BORDES TABLA
+    top = y + 80
+    bottom = y
+    for x in col_x:
+        c.line(x, top, x, bottom)
+    c.line(col_x[-1], top, col_x[-1], bottom)
+
+    c.line(col_x[0], top, col_x[-1], top)
+    c.line(col_x[0], bottom, col_x[-1], bottom)
+
+    y -= 30
+    c.setFont("Helvetica", 9)
     c.drawString(40, y, "Pagadera en colones al tipo de cambio de la fecha de cancelación de la factura")
     y -= 12
-    c.drawString(40, y, "según el tipo de cambio para la venta del Banco Central de Costa Rica.")
-    y -= 14
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(40, y, "Forma de Pago: 50% de prima, cancelación contra entrega.")
+    c.drawString(40, y, "Forma de Pago: 50% de prima, cancelación contra entrega")
 
-    # TOTALES
-    c.setFont("Helvetica-Bold", 10)
-    c.drawRightString(width - 40, y + 20, f"Subtotal: {cot.subtotal:.2f}")
-    c.drawRightString(width - 40, y, f"Total (IVA 13%): {cot.total:.2f}")
+    c.setFont("Helvetica-Bold", 11)
+    c.drawRightString(width - 40, y + 12, f"Subtotal: ₡{cot.subtotal}")
+    c.drawRightString(width - 40, y - 5, f"Total (13%): ₡{cot.total}")
 
-    # FIRMA
-    y -= 60
-    c.setFont("Helvetica", 10)
+    y -= 50
     c.drawString(40, y, "Firma autorizada")
-    y -= 30
+    y -= 12
     c.drawString(40, y, "Juan Freer Bustamante")
-    y -= 14
+    y -= 12
     c.drawString(40, y, "Gerente General")
 
     c.showPage()
@@ -165,21 +168,12 @@ def generar_pdf(cot, items):
     return buffer
 
 
-# --------------------
-# RUTAS
-# --------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-
-        today = datetime.now().strftime("%Y-%m-%d")
-
-        last = Cotizacion.query.filter(
-            Cotizacion.numero_registro.like(f"{today}%")
-        ).order_by(Cotizacion.numero_registro.desc()).first()
-
-        seq = int(last.numero_registro[-4:]) + 1 if last else 1
-        numero = f"{today}-{seq:04d}"
+        fecha = datetime.now().strftime("%Y-%m-%d")
+        count = Cotizacion.query.filter(Cotizacion.numero_registro.like(f"{fecha}%")).count() + 1
+        numero = f"{fecha}-{count:04d}"
 
         items = json.loads(request.form["items"])
         subtotal = sum(i["monto"] for i in items)
@@ -187,15 +181,15 @@ def index():
 
         cot = Cotizacion(
             numero_registro=numero,
-            nombre_cliente=request.form.get("nombre_cliente"),
-            contacto=request.form.get("contacto"),
-            email=request.form.get("email"),
-            telefono=request.form.get("telefono"),
+            nombre_cliente=request.form["nombre_cliente"],
+            contacto=request.form["contacto"],
+            email=request.form["email"],
+            telefono=request.form["telefono"],
             dias_entrega=15,
             fecha_contrato=datetime.today().date(),
             vigencia=15,
-            titulo_proyecto=request.form.get("titulo_proyecto"),
-            descripcion=request.form.get("descripcion"),
+            titulo_proyecto=request.form["titulo_proyecto"],
+            descripcion=request.form["descripcion"],
             subtotal=subtotal,
             total=total
         )
@@ -204,8 +198,8 @@ def index():
         db.session.commit()
 
         pdf = generar_pdf(cot, items)
-
         key = f"{cot.nombre_cliente}/{cot.numero_registro}/cotizacion.pdf"
+
         s3.upload_fileobj(pdf, S3_BUCKET, key, ExtraArgs={"ContentType": "application/pdf"})
         cot.s3_key = key
         db.session.commit()
@@ -220,9 +214,7 @@ def index():
 def download(id):
     cot = Cotizacion.query.get_or_404(id)
     obj = s3.get_object(Bucket=S3_BUCKET, Key=cot.s3_key)
-    return send_file(io.BytesIO(obj["Body"].read()),
-                     as_attachment=True,
-                     download_name="cotizacion.pdf")
+    return send_file(io.BytesIO(obj["Body"].read()), as_attachment=True, download_name="cotizacion.pdf")
 
 
 with app.app_context():
