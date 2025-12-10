@@ -1,7 +1,7 @@
 import os
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from flask import Flask, render_template, request, redirect, url_for, send_file
 from flask_sqlalchemy import SQLAlchemy
@@ -116,10 +116,26 @@ def generar_pdf(cot, items):
 def index():
     if request.method == "POST":
 
-        numero = f"{datetime.now().year}-{int(datetime.utcnow().timestamp())}"
+        hoy = datetime.today().date()
+        fecha_str = hoy.strftime("%Y-%m-%d")
+
+        # 🔹 CONTADOR SECUENCIAL POR FECHA
+        ultimo = (
+            Cotizacion.query
+            .filter(Cotizacion.numero_registro.like(f"{fecha_str}-%"))
+            .order_by(Cotizacion.numero_registro.desc())
+            .first()
+        )
+
+        if ultimo:
+            ultimo_num = int(ultimo.numero_registro.split("-")[-1])
+            consecutivo = ultimo_num + 1
+        else:
+            consecutivo = 1
+
+        numero = f"{fecha_str}-{consecutivo:04d}"
 
         items = json.loads(request.form["items"])
-
         subtotal = sum(i["monto"] for i in items)
         total = round(subtotal * 1.13, 2)
 
@@ -131,7 +147,7 @@ def index():
             telefono=request.form.get("telefono"),
 
             dias_entrega=15,
-            fecha_contrato=datetime.today().date(),
+            fecha_contrato=hoy,
             vigencia=15,
 
             titulo_proyecto=request.form.get("titulo_proyecto"),
@@ -162,7 +178,7 @@ def index():
 
         return redirect(url_for("index"))
 
-    cotizaciones = Cotizacion.query.order_by(Cotizacion.numero_registro.desc()).all()
+    cotizaciones = Cotizacion.query.order_by(Cotizacion.numero_registro.asc()).all()
     return render_template("index.html", cotizaciones=cotizaciones)
 
 
@@ -178,7 +194,7 @@ def download(id):
 
 
 # --------------------
-# RESET DB (GRATIS)
+# RESET DB
 # --------------------
 @app.route("/reset-db")
 def reset_db():
