@@ -1,97 +1,156 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
+    <meta charset="UTF-8">
     <title>Cotizaciones</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 6px;
+            text-align: left;
+        }
+        th {
+            background: #f2f2f2;
+        }
+    </style>
 </head>
 <body>
 
 <h2>Nueva Cotización</h2>
 
-<form method="POST" oninput="calcular()">
+<form method="POST" onsubmit="return prepararItems()">
 
-Nombre cliente: <input name="nombre_cliente"><br>
-Contacto: <input name="contacto"><br>
-Email: <input name="email"><br>
-Teléfono: <input name="telefono"><br><br>
+    <label>Nombre del cliente:</label><br>
+    <input name="nombre_cliente" required><br><br>
 
-Título proyecto: <input name="titulo_proyecto"><br>
-Descripción: <textarea name="descripcion"></textarea><br>
-Instalado: <input name="instalado"><br>
-Diseño: <input name="diseno"><br><br>
+    <label>Contacto:</label><br>
+    <input name="contacto" required><br><br>
 
-<table border="1" id="tabla">
-<tr>
-<th>Cantidad</th>
-<th>Detalle</th>
-<th>Precio</th>
-<th>Monto</th>
-</tr>
-<tr>
-<td><input></td>
-<td><input></td>
-<td><input></td>
-<td>0</td>
-</tr>
-</table>
+    <label>Email:</label><br>
+    <input name="email"><br><br>
 
-<button type="button" onclick="agregarFila()">Agregar fila</button>
+    <label>Teléfono:</label><br>
+    <input name="telefono"><br><br>
 
-<br><br>
-Subtotal: <span id="subtotal">0</span><br>
-Total (13%): <span id="total">0</span><br>
+    <label>Título del proyecto:</label><br>
+    <input name="titulo_proyecto" required><br><br>
 
-<input type="hidden" name="items" id="items">
+    <label>Descripción:</label><br>
+    <textarea name="descripcion" rows="4" cols="60"></textarea><br><br>
 
-<br>
-<button type="submit">Crear Cotización</button>
+    <h3>Detalle de la cotización</h3>
+
+    <table id="tabla">
+        <tr>
+            <th>Cantidad</th>
+            <th>Detalle</th>
+            <th>Precio</th>
+            <th>Monto</th>
+        </tr>
+        <tr>
+            <td><input type="number" step="1" oninput="calcular()"></td>
+            <td><input></td>
+            <td><input type="number" step="0.01" oninput="calcular()"></td>
+            <td>0</td>
+        </tr>
+    </table>
+
+    <br>
+    <button type="button" onclick="agregarFila()">Agregar fila</button>
+
+    <br><br>
+    <strong>Subtotal:</strong> ₡ <span id="subtotal">0</span><br>
+    <strong>Total (13%):</strong> ₡ <span id="total">0</span><br>
+
+    <input type="hidden" name="items" id="items">
+
+    <br><br>
+    <button type="submit">Crear Cotización</button>
+
 </form>
 
 <hr>
 
-<h2>Cotizaciones Guardadas</h2>
+<h2>Cotizaciones guardadas</h2>
+
 <ul>
-{% for c in cotizaciones %}
-<li>
-{{ c.numero_registro }} - {{ c.nombre_cliente }}
-<a href="/download/{{ c.id }}">Descargar PDF</a>
-</li>
-{% endfor %}
+    {% for c in cotizaciones %}
+    <li>
+        {{ c.numero_registro }} — {{ c.nombre_cliente }}
+        <a href="/download/{{ c.id }}">Descargar PDF</a>
+    </li>
+    {% endfor %}
 </ul>
 
 <script>
 function agregarFila() {
     let t = document.getElementById("tabla");
     let r = t.insertRow();
-    for (let i = 0; i < 4; i++) r.insertCell();
-    r.cells[0].innerHTML = "<input>";
-    r.cells[1].innerHTML = "<input>";
-    r.cells[2].innerHTML = "<input>";
-    r.cells[3].innerText = "0";
+
+    let c1 = r.insertCell();
+    let c2 = r.insertCell();
+    let c3 = r.insertCell();
+    let c4 = r.insertCell();
+
+    c1.innerHTML = '<input type="number" step="1" oninput="calcular()">';
+    c2.innerHTML = '<input>';
+    c3.innerHTML = '<input type="number" step="0.01" oninput="calcular()">';
+    c4.innerText = "0";
 }
 
 function calcular() {
     let rows = document.querySelectorAll("#tabla tr");
-    let items = [];
     let subtotal = 0;
 
     rows.forEach((r, i) => {
         if (i === 0) return;
-        let c = Number(r.cells[0].firstChild.value || 0);
-        let p = Number(r.cells[2].firstChild.value || 0);
-        let d = r.cells[1].firstChild.value;
 
-        let monto = c * p;
+        let cantidad = r.cells[0].firstChild.value;
+        let precio = r.cells[2].firstChild.value;
+
+        if (!cantidad || !precio) {
+            r.cells[3].innerText = "0";
+            return;
+        }
+
+        let monto = cantidad * precio;
         r.cells[3].innerText = monto.toFixed(2);
         subtotal += monto;
-
-        if (c && p) {
-            items.push({ cantidad: c, detalle: d, precio: p, monto: monto });
-        }
     });
 
     document.getElementById("subtotal").innerText = subtotal.toFixed(2);
     document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
+}
+
+function prepararItems() {
+    let rows = document.querySelectorAll("#tabla tr");
+    let items = [];
+
+    rows.forEach((r, i) => {
+        if (i === 0) return;
+
+        let cantidad = r.cells[0].firstChild.value;
+        let detalle = r.cells[1].firstChild.value;
+        let precio = r.cells[2].firstChild.value;
+
+        if (!cantidad || !precio) return;
+
+        let monto = cantidad * precio;
+
+        items.push({
+            cantidad: Number(cantidad),
+            detalle: detalle,
+            precio: Number(precio),
+            monto: monto
+        });
+    });
+
     document.getElementById("items").value = JSON.stringify(items);
+    return true;
 }
 </script>
 
