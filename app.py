@@ -106,13 +106,26 @@ def generar_pdf(cot, items):
     c.setFont("Helvetica-Bold", 12)
     c.drawCentredString(width / 2, y, cot.titulo_proyecto)
 
-    # CUADRO DE TEXTO PARA DESCRIPCIÓN
+    # CUADRO DE TEXTO PARA DESCRIPCIÓN (ALTO AUTOMÁTICO)
     y -= 20
-    box_height = 100  # Ajusta según el tamaño que necesites
-    c.rect(40, y - box_height, width - 80, box_height)  # Dibuja el cuadro
+    c.setFont("Helvetica", 10)
+    lines = []
+    for line in cot.descripcion.split("\n"):
+        words = line.split(" ")
+        current = ""
+        for w in words:
+            if c.stringWidth(current + w, "Helvetica", 10) < (width - 100):
+                current += w + " "
+            else:
+                lines.append(current)
+                current = w + " "
+        lines.append(current)
+    box_height = max(50, len(lines) * 12 + 10)  # altura mínima 50, luego 12 por línea + margen
+
+    c.rect(40, y - box_height, width - 80, box_height)  # dibuja el cuadro
     y_text_start = y - 15
     y_text_end = draw_multiline(c, cot.descripcion, 45, y_text_start, width - 100)
-    y = y_text_end - 20  # Ajusta posición para la tabla
+    y = y - box_height - 10  # colocamos la tabla debajo del cuadro
 
     # TABLA COMPLETA CON BORDES
     col_x = [40, 100, 350, 450, 540]
