@@ -11,9 +11,6 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 
-# --------------------
-# CONFIGURACIÓN FLASK
-# --------------------
 app = Flask(__name__)
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
@@ -26,9 +23,6 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
 
-# --------------------
-# CONFIGURACIÓN S3
-# --------------------
 S3_BUCKET = "cotizaciones-pdfs"
 
 s3 = boto3.client(
@@ -39,15 +33,12 @@ s3 = boto3.client(
 )
 
 
-# --------------------
-# MODELOS
-# --------------------
 class Cotizacion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     numero_registro = db.Column(db.String, unique=True, nullable=False)
 
     nombre_cliente = db.Column(db.String)
-    contacto = db.Column(db.String)
+    contacto = db.Column(db.String)  # <- queda igual, no se usa
     email = db.Column(db.String)
     telefono = db.Column(db.String)
 
@@ -66,9 +57,6 @@ class Cotizacion(db.Model):
     s3_key = db.Column(db.String)
 
 
-# --------------------
-# PDF
-# --------------------
 def generar_pdf(cot, items):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -83,7 +71,6 @@ def generar_pdf(cot, items):
     w(f"Fecha contrato: {cot.fecha_contrato}")
     w("")
     w(f"Cliente: {cot.nombre_cliente}")
-    w(f"Contacto: {cot.contacto}")
     w(f"Email: {cot.email}")
     w(f"Teléfono: {cot.telefono}")
     w("")
@@ -109,9 +96,6 @@ def generar_pdf(cot, items):
     return buffer
 
 
-# --------------------
-# RUTAS
-# --------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
@@ -119,7 +103,6 @@ def index():
         hoy = datetime.today().date()
         fecha_str = hoy.strftime("%Y-%m-%d")
 
-        # 🔹 CONTADOR SECUENCIAL POR FECHA
         ultimo = (
             Cotizacion.query
             .filter(Cotizacion.numero_registro.like(f"{fecha_str}-%"))
@@ -142,7 +125,6 @@ def index():
         cot = Cotizacion(
             numero_registro=numero,
             nombre_cliente=request.form.get("nombre_cliente"),
-            contacto=request.form.get("contacto"),
             email=request.form.get("email"),
             telefono=request.form.get("telefono"),
 
@@ -193,9 +175,6 @@ def download(id):
     )
 
 
-# --------------------
-# RESET DB
-# --------------------
 @app.route("/reset-db")
 def reset_db():
     db.drop_all()
@@ -203,8 +182,5 @@ def reset_db():
     return "Base de datos reiniciada ✅"
 
 
-# --------------------
-# INIT
-# --------------------
 with app.app_context():
     db.create_all()
