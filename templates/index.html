@@ -9,7 +9,6 @@
 <form method="POST" onsubmit="return prepararItems()">
 
 Nombre cliente: <input name="nombre_cliente"><br>
-Contacto: <input name="contacto"><br>
 Email: <input name="email"><br>
 Teléfono: <input name="telefono"><br><br>
 
@@ -26,9 +25,9 @@ Diseño: <input name="diseno"><br><br>
 <th>Monto</th>
 </tr>
 <tr>
+<td><input oninput="recalcular()"></td>
 <td><input></td>
-<td><input></td>
-<td><input></td>
+<td><input oninput="recalcular()"></td>
 <td>0</td>
 </tr>
 </table>
@@ -62,10 +61,30 @@ function agregarFila() {
     let t = document.getElementById("tabla");
     let r = t.insertRow();
     for (let i = 0; i < 4; i++) r.insertCell();
-    r.cells[0].innerHTML = "<input>";
+    r.cells[0].innerHTML = "<input oninput='recalcular()'>";
     r.cells[1].innerHTML = "<input>";
-    r.cells[2].innerHTML = "<input>";
+    r.cells[2].innerHTML = "<input oninput='recalcular()'>";
     r.cells[3].innerText = "0";
+}
+
+function recalcular() {
+    let rows = document.querySelectorAll("#tabla tr");
+    let subtotal = 0;
+
+    rows.forEach((r, i) => {
+        if (i === 0) return;
+
+        let c = Number(r.cells[0].querySelector("input")?.value || 0);
+        let p = Number(r.cells[2].querySelector("input")?.value || 0);
+
+        let monto = c * p;
+        r.cells[3].innerText = monto;
+
+        subtotal += monto;
+    });
+
+    document.getElementById("subtotal").innerText = subtotal;
+    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
 }
 
 function prepararItems() {
@@ -75,29 +94,27 @@ function prepararItems() {
 
     rows.forEach((r, i) => {
         if (i === 0) return;
-        let c = r.cells[0].firstChild.value;
-        let d = r.cells[1].firstChild.value;
-        let p = r.cells[2].firstChild.value;
+
+        let c = Number(r.cells[0].querySelector("input")?.value || 0);
+        let d = r.cells[1].querySelector("input")?.value || "";
+        let p = Number(r.cells[2].querySelector("input")?.value || 0);
         if (!c || !p) return;
 
         let monto = c * p;
-        r.cells[3].innerText = monto;
         subtotal += monto;
 
         items.push({
-            cantidad: Number(c),
+            cantidad: c,
             detalle: d,
-            precio: Number(p),
+            precio: p,
             monto: monto
         });
     });
 
-    document.getElementById("subtotal").innerText = subtotal;
-    document.getElementById("total").innerText = (subtotal * 1.13).toFixed(2);
     document.getElementById("items").value = JSON.stringify(items);
-
     return true;
 }
 </script>
 </body>
 </html>
+
