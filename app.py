@@ -106,12 +106,15 @@ def generar_pdf(cot, items):
     c.setFont("Helvetica-Bold", 12)
     c.drawCentredString(width / 2, y, cot.titulo_proyecto)
 
+    # CUADRO DE TEXTO PARA DESCRIPCIÓN
     y -= 20
-    c.rect(40, y - 80, width - 80, 80)
-    y = draw_multiline(c, cot.descripcion, 45, y - 15, width - 100)
-    y -= 20
+    box_height = 100  # Ajusta según el tamaño que necesites
+    c.rect(40, y - box_height, width - 80, box_height)  # Dibuja el cuadro
+    y_text_start = y - 15
+    y_text_end = draw_multiline(c, cot.descripcion, 45, y_text_start, width - 100)
+    y = y_text_end - 20  # Ajusta posición para la tabla
 
-    # TABLA
+    # TABLA COMPLETA CON BORDES
     col_x = [40, 100, 350, 450, 540]
     row_h = 20
 
@@ -123,27 +126,32 @@ def generar_pdf(cot, items):
     y -= row_h
     c.setFont("Helvetica", 9)
 
+    # Filas de la tabla
+    row_positions = []
     for item in items:
         y_start = y
-        y = draw_multiline(c, str(item["detalle"]), col_x[1] + 5, y, col_x[2] - col_x[1] - 10)
-        max_y = min(y, y_start - row_h)
+        y_end = draw_multiline(c, str(item["detalle"]), col_x[1] + 5, y, col_x[2] - col_x[1] - 10)
+        max_y = min(y_end, y_start - row_h)
 
         c.drawString(col_x[0] + 5, y_start, str(item["cantidad"]))
         c.drawString(col_x[2] + 5, y_start, f"{item['precio']}")
         c.drawString(col_x[3] + 5, y_start, f"{item['monto']}")
 
-        y = max_y - 10
+        row_positions.append((y_start, max_y))
+        y = max_y - 5
 
-    # BORDES TABLA
-    top = y + 80
-    bottom = y
+    # DIBUJAR TODOS LOS BORDES DE LA TABLA
+    top = row_positions[0][0] + 5
+    bottom = row_positions[-1][1] - 5
     for x in col_x:
         c.line(x, top, x, bottom)
     c.line(col_x[-1], top, col_x[-1], bottom)
 
-    c.line(col_x[0], top, col_x[-1], top)
+    for y_top, y_bottom in row_positions:
+        c.line(col_x[0], y_top, col_x[-1], y_top)
     c.line(col_x[0], bottom, col_x[-1], bottom)
 
+    # Nota y total
     y -= 30
     c.setFont("Helvetica", 9)
     c.drawString(40, y, "Pagadera en colones al tipo de cambio de la fecha de cancelación de la factura")
